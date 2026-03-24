@@ -1,6 +1,6 @@
 # Internet Radio Jukebox
 
-A zero-config custom Lovelace card for Home Assistant that turns your media players into an internet radio jukebox. Supports both dark and light themes.
+A custom Lovelace card for Home Assistant that turns your media players into an internet radio jukebox. Works out of the box with zero configuration — just add the card and start listening.
 
 ![HACS Badge](https://img.shields.io/badge/HACS-Custom-orange.svg)
 
@@ -8,18 +8,17 @@ A zero-config custom Lovelace card for Home Assistant that turns your media play
 
 ## Features
 
-- **Zero-config** — just add `type: custom:jukebox-card` and it works
-- **104 built-in stations** across 12 genres (Alternative, Rock, Metal, Pop, Lounge/Chill, Sleep, House, Tech House, 80s, Polish, Italian, French)
-- **Auto-discovers speakers** — finds all media players in your Home Assistant
-- **Visual card editor** — full GUI for configuring stations and speakers
-- **Station explorer** — search and browse thousands of stations via the Radio Browser API
-- **Dark and light theme support** — text and controls adapt to your HA theme
+- **Zero-config** — add the card and it works immediately with 104 built-in stations
+- **Visual card editor** — manage everything through the UI, no YAML needed
+- **Station explorer** — search and browse thousands of stations via Radio Browser
+- **Auto-discovers speakers** — finds all media players with play-media support
+- **Cast device artwork** — pushes station logos to Chromecast, Nest Hub, and other Cast devices
+- **Smart speaker selection** — auto-selects the currently playing speaker on new browsers
+- **12 built-in genres** — Alternative, Rock, Metal, Pop, Lounge/Chill, Sleep, House, Tech House, 80s, Polish, Italian, French
+- **Dark and light theme support**
 - **Now-playing banner** with stop button
 - **Per-category grids** with horizontal scroll and pagination dots
-- **Station logos** from SomaFM CDN, Radio Browser favicons, or custom URLs
-- **Hash-color fallback** for stations without logos
-- **Volume control** with debounced slider
-- **Speaker persistence** via localStorage
+- **Volume control** with per-device volume for multi-speaker setups
 
 ## Installation
 
@@ -39,79 +38,63 @@ A zero-config custom Lovelace card for Home Assistant that turns your media play
    - URL: `/local/jukebox-card.js`
    - Type: JavaScript Module
 
-## Usage
+## Quick Start
 
-Add the card to any dashboard view:
-
-```yaml
-type: custom:jukebox-card
-```
-
-That's it! The card will auto-discover your speakers and show 104 built-in stations organized by genre. Click any station tile to start playing on the selected speaker.
-
-### Visual Card Editor
-
-You can configure everything through the UI — no YAML needed:
-
-1. Edit your dashboard and add a new card
+1. Edit your dashboard and click **+ Add Card**
 2. Search for **Internet Radio Jukebox**
-3. Use the **General** tab to set columns, tile height, and speaker mode
-4. Use the **Stations** tab to manage categories and stations
-5. The **Explore** sub-tab lets you search thousands of internet radio stations and add them with one click
+3. Click any station tile to start playing on the selected speaker
 
-### Configuration Options
+That's it! The card auto-discovers your speakers and comes loaded with 104 stations across 12 genres.
 
-All options are optional. The card works with zero configuration.
+## Configuration (Visual Editor)
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `columns` | number | 3 | Number of station tiles per row |
-| `tile_height` | string | `"120px"` | Height of each station tile |
-| `speakers` | list | auto-discover | Manual speaker list (overrides auto-discovery) |
-| `categories` | list | 104 built-in | Custom station categories (replaces defaults entirely) |
+Everything is configured through the card's built-in visual editor — no YAML required.
 
-### Custom Speakers
+### General Tab
 
-Override auto-discovery with a specific list of speakers:
+- **Columns** — number of station tiles per row (1–8, default 4)
+- **Tile Height** — height of each station tile in pixels (40–300, default 120)
+- **Speaker Mode** — choose between:
+  - **Auto-discover** — automatically finds all media players that support play-media
+  - **Manual** — define a specific list of speakers (see below)
 
-```yaml
-type: custom:jukebox-card
-speakers:
-  - name: Living Room
-    entity_id: media_player.living_room_speaker
-  - name: Kitchen
-    entity_id: media_player.kitchen_speaker
-```
+### Adding Speakers (Manual Mode)
 
-### Custom Stations
+1. In the **General** tab, switch speaker mode to **Manual**
+2. Click **+ Add Speaker**
+3. Enter a display name and select a `media_player` entity from the dropdown
+4. Use the arrow buttons to reorder speakers
+5. The first speaker in the list is the default selection
 
-Replace the built-in stations with your own:
+### Managing Categories
 
-```yaml
-type: custom:jukebox-card
-categories:
-  - name: My Favorites
-    stations:
-      - name: KEXP
-        url: https://kexp-mp3-128.streamguys1.com/kexp128.mp3
-      - name: SomaFM Groove Salad
-        url: https://ice5.somafm.com/groovesalad-128-mp3
-        logo: https://api.somafm.com/logos/256/groovesalad256.png
-  - name: Chill
-    stations:
-      - name: Drone Zone
-        url: https://ice5.somafm.com/dronezone-256-mp3
-        logo: https://api.somafm.com/logos/256/dronezone256.png
-      - name: Groove Salad Classic
-        url: https://ice5.somafm.com/gsclassic-128-mp3
-        logo: https://api.somafm.com/logos/256/gsclassic256.png
-```
+In the **Stations** tab, each genre is a collapsible category:
 
-Or use the built-in visual editor to add, remove, and reorder stations without writing any YAML.
+- **Rename** — click the ✎ pencil icon next to the category name (or double-click the name)
+- **Reorder** — use the ▲ ▼ arrow buttons to move categories up or down
+- **Delete** — click the × button to remove a category
+- **Add** — click **+ Add Category** at the bottom to create a new category
 
-## Dark and Light Theme Support
+### Adding Stations
 
-The card automatically adapts to your Home Assistant theme. Speaker controls, category headers, and all text use HA theme variables (`--primary-text-color`, `--card-background-color`, etc.) so they update instantly when you switch themes. Station tiles use a consistent dark style with white text overlays for readability regardless of theme.
+Expand a category and click **+ Add Station** to open the station panel with three options:
+
+**Explore** — Search thousands of internet radio stations by name. Results show the station's country, genre tags, bitrate, and codec. Click the ▶ button to preview, then click **+** to add.
+
+**Browse Defaults** — Browse the 104 built-in stations organized by genre. Stations already in your category show a ✓ checkmark.
+
+**Manual** — Enter a station name, stream URL, and optional logo URL to add any station.
+
+### Resetting to Defaults
+
+If you've customized your stations and want to start over, click **Reset to Defaults** at the bottom of the Stations tab.
+
+## How It Works
+
+- **Speaker persistence** — your selected speaker is saved per-browser via localStorage
+- **Active speaker detection** — on a new browser with no saved preference, the card auto-selects whichever speaker is currently playing (prefers speaker groups over individual devices)
+- **Cast artwork** — station logos are sent to Cast devices (Nest Hub, Chromecast, etc.) as signed URLs, so artwork displays correctly even through Nabu Casa remote access
+- **Now-playing helper** — the card creates an `input_text.jukebox_now_playing` helper to track the current station across devices
 
 ## License
 

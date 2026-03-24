@@ -390,6 +390,7 @@ class JukeboxCardEditor extends HTMLElement {
             <span class="cat-name-display" data-index="${i}">${this._esc(cat.name)}</span>
             <span class="station-count">(${cat.stations.length})</span>
             <span class="cat-actions">
+              <button class="icon-btn rename-cat" data-index="${i}" title="Rename category">&#9998;</button>
               <button class="icon-btn move-up" data-index="${i}" ${i === 0 ? 'disabled' : ''} title="Move up">\u25B2</button>
               <button class="icon-btn move-down" data-index="${i}" ${i === categories.length - 1 ? 'disabled' : ''} title="Move down">\u25BC</button>
               <button class="icon-btn delete-cat" data-index="${i}" title="Delete category">&times;</button>
@@ -751,19 +752,27 @@ class JukeboxCardEditor extends HTMLElement {
       });
     });
 
-    // Category name edit (double-click)
+    // Category rename (double-click name or pencil button)
+    const renameCategory = (idx) => {
+      const current = this._getWorkingCategories()[idx].name;
+      const newName = prompt('Category name:', current);
+      if (newName && newName.trim()) {
+        this._ensureCategories();
+        this._config.categories[idx].name = newName.trim();
+        this._fireConfigChanged();
+        this._render();
+      }
+    };
     root.querySelectorAll('.cat-name-display').forEach(el => {
       el.addEventListener('dblclick', e => {
         e.stopPropagation();
-        const idx = parseInt(el.dataset.index);
-        const current = this._getWorkingCategories()[idx].name;
-        const newName = prompt('Category name:', current);
-        if (newName && newName.trim()) {
-          this._ensureCategories();
-          this._config.categories[idx].name = newName.trim();
-          this._fireConfigChanged();
-          this._render();
-        }
+        renameCategory(parseInt(el.dataset.index));
+      });
+    });
+    root.querySelectorAll('.rename-cat').forEach(btn => {
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        renameCategory(parseInt(btn.dataset.index));
       });
     });
 
