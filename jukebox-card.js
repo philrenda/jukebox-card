@@ -1736,13 +1736,32 @@ class JukeboxCard extends HTMLElement {
     return speakers.sort((a, b) => a.name.localeCompare(b.name));
   }
 
+  _detectActiveSpeaker(speakers) {
+    if (!this._hass || !speakers.length) return null;
+    const playing = speakers.filter(sp => {
+      const st = this._hass.states[sp.entity];
+      return st && st.state === 'playing';
+    });
+    if (!playing.length) return null;
+    // Prefer groups (Cast groups have group_members with >1 entry)
+    const group = playing.find(sp => {
+      const members = this._hass.states[sp.entity].attributes.group_members;
+      return Array.isArray(members) && members.length > 1;
+    });
+    return (group || playing[0]).entity;
+  }
+
   _resolveSelectedSpeaker() {
     const speakers = this._getSpeakers();
     if (!speakers.length) return null;
+    // Explicit user choice persisted in localStorage takes priority
     const stored = localStorage.getItem('jukebox-card-speaker');
     if (stored && speakers.find(s => s.entity === stored)) {
       return stored;
     }
+    // No stored preference — pick whichever speaker is actively playing
+    const active = this._detectActiveSpeaker(speakers);
+    if (active) return active;
     return speakers[0].entity;
   }
 
@@ -1899,10 +1918,8 @@ class JukeboxCard extends HTMLElement {
     const speakers = this._getSpeakers();
     const categories = this._getCategories();
 
-    // Resolve speaker for auto-discover mode
-    if (!config.speakers || !config.speakers.length) {
-      this._selectedSpeaker = this._resolveSelectedSpeaker();
-    }
+    // Resolve speaker: localStorage > active player > first
+    this._selectedSpeaker = this._resolveSelectedSpeaker();
 
     const activeUrl = this._getActiveStationUrl();
     const speakerState = this._hass.states[this._selectedSpeaker];
