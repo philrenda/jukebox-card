@@ -1769,13 +1769,21 @@ class JukeboxCard extends HTMLElement {
 
   // ── Actions ──
 
-  _playStation(station) {
+  _playStation(station, categoryName) {
     if (!this._hass || !this._selectedSpeaker) return;
 
     this._hass.callService('media_player', 'play_media', {
       entity_id: this._selectedSpeaker,
       media_content_id: station.url,
-      media_content_type: 'music'
+      media_content_type: 'music',
+      extra: {
+        metadata: {
+          metadataType: 3,
+          title: station.name,
+          artist: categoryName || 'Internet Radio',
+          ...(station.logo ? { images: [{ url: station.logo }] } : {})
+        }
+      }
     });
 
     this._hass.callService('input_text', 'set_value', {
@@ -1991,7 +1999,7 @@ class JukeboxCard extends HTMLElement {
           label.textContent = station.name;
           tile.appendChild(label);
 
-          tile.addEventListener('click', () => this._playStation(station));
+          tile.addEventListener('click', () => this._playStation(station, cat.name));
           page.appendChild(tile);
         });
 
