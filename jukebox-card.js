@@ -1806,23 +1806,44 @@ class JukeboxCard extends HTMLElement {
 
   // ── Actions ──
 
-  _playStation(station, categoryName) {
+  async _getSignedImageUrl(logo) {
+    if (!logo) return null;
+    if (logo.startsWith('http://') || logo.startsWith('https://')) return logo;
+    try {
+      const result = await this._hass.callWS({
+        type: 'auth/sign_path',
+        path: logo,
+        expires: 86400
+      });
+      return `${window.location.origin}${result.path}`;
+    } catch (e) {
+      return `${window.location.origin}${logo}`;
+    }
+  }
+
+  async _playStation(station, categoryName) {
     if (!this._hass || !this._selectedSpeaker) return;
+
+    const logoUrl = await this._getSignedImageUrl(station.logo);
+
+    const extra = {
+      metadata: {
+        metadataType: 3,
+        title: station.name,
+        artist: categoryName || 'Internet Radio',
+        albumName: categoryName || 'Internet Radio',
+        ...(logoUrl ? { images: [{ url: logoUrl, width: 256, height: 256 }] } : {})
+      },
+      title: station.name,
+      stream_type: 'LIVE'
+    };
+    if (logoUrl) extra.thumb = logoUrl;
 
     this._hass.callService('media_player', 'play_media', {
       entity_id: this._selectedSpeaker,
       media_content_id: station.url,
       media_content_type: 'audio/mp3',
-      extra: {
-        metadata: {
-          metadataType: 3,
-          title: station.name,
-          artist: categoryName || 'Internet Radio',
-          ...(station.logo ? { images: [{ url: station.logo }] } : {})
-        },
-        thumb: station.logo || '',
-        title: station.name
-      }
+      extra
     });
 
     this._hass.callService('input_text', 'set_value', {
@@ -2243,16 +2264,26 @@ class JukeboxCard extends HTMLElement {
       .device-vol-toggle {
         display: flex;
         align-items: center;
-        gap: 6px;
-        font-size: 12px;
-        color: var(--secondary-text-color);
+        gap: 8px;
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--primary-text-color);
         cursor: pointer;
-        padding: 2px 0;
+        padding: 6px 10px;
+        margin-top: 4px;
         user-select: none;
+        border: 1px solid var(--divider-color, #e0e0e0);
+        border-radius: 8px;
+        background: var(--secondary-background-color, #f5f5f5);
+        transition: background 0.15s, border-color 0.15s;
       }
-      .device-vol-toggle:hover { color: var(--primary-text-color); }
+      .device-vol-toggle:hover {
+        background: var(--primary-color, #ff9800);
+        color: #fff;
+        border-color: var(--primary-color, #ff9800);
+      }
       .device-vol-chevron {
-        font-size: 9px;
+        font-size: 10px;
         width: 12px;
         text-align: center;
       }
