@@ -1127,7 +1127,7 @@ class JukeboxCardEditor extends HTMLElement {
 
   _getEditorStyles() {
     return `
-      :host { display: block; }
+      :host { display: block; color-scheme: inherit; }
       .editor {
         font-family: var(--primary-font-family, sans-serif);
         font-size: 14px;
@@ -2045,7 +2045,7 @@ class JukeboxCard extends HTMLElement {
 
   _getStyles() {
     return `
-      :host { display: block; }
+      :host { display: block; color-scheme: inherit; }
       ha-card {
         padding: 16px;
         box-sizing: border-box;
@@ -2084,6 +2084,10 @@ class JukeboxCard extends HTMLElement {
         font-size: 14px;
         font-family: inherit;
         cursor: pointer;
+      }
+      .speaker-select option {
+        background: var(--card-background-color, #fff);
+        color: var(--primary-text-color);
       }
       .volume-slider {
         flex: 1;
