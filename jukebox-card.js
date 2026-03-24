@@ -317,6 +317,8 @@ class JukeboxCardEditor extends HTMLElement {
       speakers.forEach((sp, i) => {
         speakerRows += `
           <div class="speaker-row">
+            <button class="icon-btn move-speaker-up" data-speaker-idx="${i}" ${i === 0 ? 'disabled' : ''} title="Move up">&#9650;</button>
+            <button class="icon-btn move-speaker-down" data-speaker-idx="${i}" ${i === speakers.length - 1 ? 'disabled' : ''} title="Move down">&#9660;</button>
             <input type="text" class="field" placeholder="Name" value="${this._esc(sp.name || '')}"
               data-focus-id="spk-name-${i}" data-speaker-idx="${i}" data-speaker-field="name">
             <input type="text" class="field" list="mp-entities" placeholder="media_player.xxx" value="${this._esc(sp.entity || '')}"
@@ -688,6 +690,32 @@ class JukeboxCardEditor extends HTMLElement {
         if (this._config.speakers) {
           this._config.speakers.splice(idx, 1);
           if (this._config.speakers.length === 0) delete this._config.speakers;
+          this._fireConfigChanged();
+          this._render();
+        }
+      });
+    });
+
+    // Move speaker up
+    root.querySelectorAll('.move-speaker-up').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const idx = parseInt(btn.dataset.speakerIdx);
+        if (idx > 0 && this._config.speakers) {
+          const spk = this._config.speakers;
+          [spk[idx - 1], spk[idx]] = [spk[idx], spk[idx - 1]];
+          this._fireConfigChanged();
+          this._render();
+        }
+      });
+    });
+
+    // Move speaker down
+    root.querySelectorAll('.move-speaker-down').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const idx = parseInt(btn.dataset.speakerIdx);
+        if (this._config.speakers && idx < this._config.speakers.length - 1) {
+          const spk = this._config.speakers;
+          [spk[idx], spk[idx + 1]] = [spk[idx + 1], spk[idx]];
           this._fireConfigChanged();
           this._render();
         }
@@ -1218,6 +1246,12 @@ class JukeboxCardEditor extends HTMLElement {
         align-items: center;
       }
       .speaker-row .field { flex: 1; }
+      .speaker-row .move-speaker-up,
+      .speaker-row .move-speaker-down {
+        width: 24px;
+        height: 24px;
+        font-size: 10px;
+      }
 
       /* Icon button */
       .icon-btn {
@@ -1588,6 +1622,8 @@ class JukeboxCard extends HTMLElement {
     this._selectedSpeaker = null;
     this._draggingVolume = false;
     this._volumeTimeout = null;
+    this._deviceVolumeTimeouts = {};
+    this._showDeviceVolumes = false;
     this._helperChecked = false;
   }
 
@@ -1724,6 +1760,7 @@ class JukeboxCard extends HTMLElement {
   _computeStateHash(hass) {
     const speakers = this._getSpeakers();
     const parts = [`sel:${this._selectedSpeaker}`, `spk:${speakers.map(s => s.entity).join(',')}`];
+    parts.push(`dvol:${this._showDeviceVolumes ? '1' : '0'}`);
     for (const s of speakers) {
       const st = hass.states[s.entity];
       if (!st) { parts.push(''); continue; }
@@ -1775,14 +1812,16 @@ class JukeboxCard extends HTMLElement {
     this._hass.callService('media_player', 'play_media', {
       entity_id: this._selectedSpeaker,
       media_content_id: station.url,
-      media_content_type: 'music',
+      media_content_type: 'audio/mp3',
       extra: {
         metadata: {
           metadataType: 3,
           title: station.name,
           artist: categoryName || 'Internet Radio',
           ...(station.logo ? { images: [{ url: station.logo }] } : {})
-        }
+        },
+        thumb: station.logo || '',
+        title: station.name
       }
     });
 
@@ -1805,6 +1844,17 @@ class JukeboxCard extends HTMLElement {
     this._volumeTimeout = setTimeout(() => {
       this._hass.callService('media_player', 'volume_set', {
         entity_id: this._selectedSpeaker,
+        volume_level: level
+      });
+    }, 100);
+  }
+
+  _setDeviceVolume(entityId, level) {
+    if (!this._hass) return;
+    clearTimeout(this._deviceVolumeTimeouts[entityId]);
+    this._deviceVolumeTimeouts[entityId] = setTimeout(() => {
+      this._hass.callService('media_player', 'volume_set', {
+        entity_id: entityId,
         volume_level: level
       });
     }, 100);
@@ -1924,6 +1974,61 @@ class JukeboxCard extends HTMLElement {
       volPct.textContent = `${Math.round(volume * 100)}%`;
       volWrap.appendChild(volPct);
       controls.appendChild(volWrap);
+
+      // ── Per-device volume toggle + panel ──
+      const devVolToggle = document.createElement('div');
+      devVolToggle.className = 'device-vol-toggle';
+      devVolToggle.innerHTML = `<span class="device-vol-chevron">${this._showDeviceVolumes ? '\u25BC' : '\u25B6'}</span> Individual Speakers`;
+      devVolToggle.addEventListener('click', () => {
+        this._showDeviceVolumes = !this._showDeviceVolumes;
+        this._lastStateHash = null;
+        this._render();
+      });
+      controls.appendChild(devVolToggle);
+
+      if (this._showDeviceVolumes) {
+        const devVolPanel = document.createElement('div');
+        devVolPanel.className = 'device-volumes';
+        for (const sp of speakers) {
+          const st = this._hass.states[sp.entity];
+          if (!st || st.attributes.volume_level === undefined) continue;
+          const devVol = st.attributes.volume_level || 0;
+
+          const row = document.createElement('div');
+          row.className = 'device-vol-row';
+
+          const label = document.createElement('div');
+          label.className = 'device-vol-label';
+          label.textContent = sp.name;
+          row.appendChild(label);
+
+          const sliderWrap = document.createElement('div');
+          sliderWrap.className = 'device-vol-slider-wrap';
+
+          const devSlider = document.createElement('input');
+          devSlider.type = 'range';
+          devSlider.className = 'volume-slider device-vol-slider';
+          devSlider.min = '0'; devSlider.max = '1'; devSlider.step = '0.02';
+          devSlider.value = devVol;
+          const devPct = document.createElement('span');
+          devPct.className = 'vol-pct';
+          devPct.textContent = `${Math.round(devVol * 100)}%`;
+
+          const entityId = sp.entity;
+          devSlider.addEventListener('input', e => {
+            this._draggingVolume = true;
+            this._setDeviceVolume(entityId, parseFloat(e.target.value));
+            devPct.textContent = `${Math.round(e.target.value * 100)}%`;
+          });
+          devSlider.addEventListener('change', () => { this._draggingVolume = false; });
+
+          sliderWrap.appendChild(devSlider);
+          sliderWrap.appendChild(devPct);
+          row.appendChild(sliderWrap);
+          devVolPanel.appendChild(row);
+        }
+        controls.appendChild(devVolPanel);
+      }
     } else {
       const noSpk = document.createElement('div');
       noSpk.className = 'no-speakers';
@@ -2133,6 +2238,53 @@ class JukeboxCard extends HTMLElement {
         font-size: 14px;
         padding: 8px;
       }
+
+      /* ── Per-device Volume ── */
+      .device-vol-toggle {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        color: var(--secondary-text-color);
+        cursor: pointer;
+        padding: 2px 0;
+        user-select: none;
+      }
+      .device-vol-toggle:hover { color: var(--primary-text-color); }
+      .device-vol-chevron {
+        font-size: 9px;
+        width: 12px;
+        text-align: center;
+      }
+      .device-volumes {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        padding: 8px 12px;
+        border: 1px solid var(--divider-color, #e0e0e0);
+        border-radius: 8px;
+        background: var(--secondary-background-color, #f5f5f5);
+      }
+      .device-vol-row {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+      .device-vol-label {
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--primary-text-color);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .device-vol-slider-wrap {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .device-vol-slider-wrap .volume-slider { flex: 1; }
+      .device-vol-slider-wrap .vol-pct { min-width: 38px; }
 
       /* ── Now Playing ── */
       .now-playing {
