@@ -4,7 +4,7 @@ A custom Lovelace card for Home Assistant that turns your media players into an 
 
 ![HACS Badge](https://img.shields.io/badge/HACS-Custom-orange.svg)
 
-![Internet Radio Jukebox Screenshot](screenshots/jukebox-card.png)
+<img src="screenshots/jukebox-card.png" alt="Internet Radio Jukebox Screenshot" width="500">
 
 ## Features
 
