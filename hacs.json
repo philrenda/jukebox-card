@@ -1,6 +1,5 @@
 {
-  "name": "Internet Radio Jukebox",
+  "name": "Jukebox Card",
   "render_readme": true,
-  "content_in_root": true,
   "filename": "jukebox-card.js"
 }

@@ -1,5 +1,6 @@
 // ─────────────────────────────────────────────────────────────────
-//  Jukebox Card v2 — Zero-config, self-service station management
+//  Jukebox Card v2.1.0 — Zero-config, self-service station management
+//  + Cast speaker tracking, Alexa TuneIn, custom image upload
 // ─────────────────────────────────────────────────────────────────
 
 // ── Built-in Default Stations ──────────────────────────────────
@@ -124,51 +125,6 @@ const DEFAULT_STATIONS = [
       { name: 'Vaporwaves', url: 'https://ice5.somafm.com/vaporwaves-128-mp3', logo: 'https://api.somafm.com/logos/256/vaporwaves256.png' },
     ]
   },
-  {
-    name: 'Polish',
-    stations: [
-      { name: 'RMF FM', url: 'http://195.150.20.242:8000/rmf_fm' },
-      { name: 'Radio ZET', url: 'https://r.dcs.redcdn.pl/sc/o2/Eurozet/live/audio.livx?audio=5' },
-      { name: 'Antyradio', url: 'https://an04.cdn.eurozet.pl/ant-web.mp3' },
-      { name: 'Radio Eska', url: 'https://waw.ic.smcdn.pl/2380-1.mp3' },
-      { name: 'RMF MAXXX', url: 'http://195.150.20.7/rmf_maxxx' },
-      { name: 'Radio Nowy Swiat', url: 'https://stream.nowyswiat.online/mp3' },
-      { name: 'Chillizet', url: 'https://ch.cdn.eurozet.pl/chi-net.mp3' },
-      { name: 'Radio Pogoda', url: 'http://stream30.radiostream.pl/tuba138-1.mp3' },
-      { name: 'Polskie Radio', url: 'http://mp3.polskieradio.pl:8900/;.mp3' },
-      { name: 'MUZO.FM', url: 'http://stream4.nadaje.com/muzo' },
-    ]
-  },
-  {
-    name: 'Italian',
-    stations: [
-      { name: 'RTL 102.5', url: 'http://shoutcast.rtl.it:3010/' },
-      { name: 'Radio 105', url: 'https://icecast.unitedradio.it/Radio105.mp3' },
-      { name: 'Kiss Kiss', url: 'https://kisskiss.fluidstream.eu/KissKiss.aac' },
-      { name: 'Monte Carlo', url: 'https://icecast.unitedradio.it/RMC.mp3' },
-      { name: 'Virgin Radio IT', url: 'https://icecast.unitedradio.it/Virgin.mp3' },
-      { name: 'Radio 24', url: 'http://shoutcast.radio24.it:8000/;' },
-      { name: 'R101', url: 'http://icecast.unitedradio.it/r101' },
-      { name: 'RAI Radio 1', url: 'http://icestreaming.rai.it/1.mp3' },
-      { name: 'RAI Radio 2', url: 'http://icestreaming.rai.it/2.mp3' },
-      { name: 'RAI Radio 3', url: 'http://icestreaming.rai.it/3.mp3' },
-    ]
-  },
-  {
-    name: 'French',
-    stations: [
-      { name: 'FIP', url: 'https://icecast.radiofrance.fr/fip-hifi.aac?id=radiofrance' },
-      { name: 'France Inter', url: 'https://icecast.radiofrance.fr/franceinter-hifi.aac?id=radiofrance' },
-      { name: 'Radio Nova', url: 'http://novazz.ice.infomaniak.ch/novazz-128.mp3' },
-      { name: 'TSF Jazz', url: 'http://tsfjazz.ice.infomaniak.ch/tsfjazz-high.mp3' },
-      { name: 'NRJ', url: 'http://streaming.nrjaudio.fm/oumvmk8fnozc' },
-      { name: 'Skyrock', url: 'http://icecast.skyrock.net/s/natio_mp3_128k' },
-      { name: 'Nostalgie', url: 'http://streaming.nrjaudio.fm/oug7girb92oc' },
-      { name: 'RTL', url: 'http://streaming.radio.rtl.fr/rtl-1-44-128' },
-      { name: "Mouv'", url: 'https://icecast.radiofrance.fr/mouv-hifi.aac?id=radiofrance' },
-      { name: 'Cherie FM', url: 'http://streaming.nrjaudio.fm/ouuku85n3nje' },
-    ]
-  },
 ];
 
 
@@ -238,6 +194,7 @@ class JukeboxCardEditor extends HTMLElement {
     if (this._config.tile_height !== undefined) config.tile_height = this._config.tile_height;
     if (this._config.speakers) config.speakers = this._config.speakers;
     if (this._config.categories) config.categories = this._config.categories;
+    if (this._config.custom_logos) config.custom_logos = this._config.custom_logos;
     this.dispatchEvent(new CustomEvent('config-changed', {
       bubbles: true,
       composed: true,
@@ -1629,11 +1586,37 @@ class JukeboxCard extends HTMLElement {
     this._hass = null;
     this._lastStateHash = null;
     this._selectedSpeaker = null;
+    this._zones = null;
+    this._zoneSeq = 0;
+    this._activeZoneId = null;
     this._draggingVolume = false;
     this._volumeTimeout = null;
     this._deviceVolumeTimeouts = {};
     this._showDeviceVolumes = false;
     this._helperChecked = false;
+    this._castSpeakers = new Set();
+  }
+
+  connectedCallback() {
+    this._onResize = () => this._sizeCard();
+    window.addEventListener('resize', this._onResize);
+    this._sizeCard();
+  }
+
+  disconnectedCallback() {
+    if (this._onResize) window.removeEventListener('resize', this._onResize);
+  }
+
+  // Pin the card to the viewport bottom so .stations-area scrolls internally
+  // while the controls above it stay fixed. Falls back to natural height
+  // (whole-page scroll) when the viewport is too short to be usable.
+  _sizeCard() {
+    const card = this.shadowRoot && this.shadowRoot.querySelector('ha-card');
+    if (!card) return;
+    card.style.height = '';
+    const top = card.getBoundingClientRect().top;
+    const h = Math.floor(window.innerHeight - top - 8);
+    if (h >= 300) card.style.height = h + 'px';
   }
 
   static getConfigElement() {
@@ -1671,16 +1654,9 @@ class JukeboxCard extends HTMLElement {
 
     this._config = { columns: 4, tile_height: 120, ...config };
 
-    // Resolve selected speaker from manual config
-    if (config.speakers && config.speakers.length) {
-      const stored = localStorage.getItem('jukebox-card-speaker');
-      if (stored && config.speakers.find(s => s.entity === stored)) {
-        this._selectedSpeaker = stored;
-      } else {
-        this._selectedSpeaker = config.speakers[0].entity;
-      }
-    }
-    // If no speakers in config, resolved dynamically via _resolveSelectedSpeaker()
+    // Zones are reconstructed from live playback state
+    this._zones = null;
+    this._activeZoneId = null;
 
     if (this._hass) this._render();
   }
@@ -1688,12 +1664,46 @@ class JukeboxCard extends HTMLElement {
   set hass(hass) {
     this._hass = hass;
     this._ensureNowPlayingHelper();
+    this._learnGroups(hass);
+    if (this._config) this._reconcileZones(hass);
+    // Auto-cleanup cast tracking — remove idle/off speakers
+    if (this._castSpeakers && this._castSpeakers.size > 0) {
+      for (const id of [...this._castSpeakers]) {
+        const state = hass.states[id];
+        if (!state || state.state === 'idle' || state.state === 'off') {
+          this._castSpeakers.delete(id);
+        }
+      }
+    }
     if (this._draggingVolume) return;
     const hash = this._computeStateHash(hass);
-    if (hash !== this._lastStateHash) {
-      this._lastStateHash = hash;
+    if (hash === this._lastStateHash) return;
+    this._lastStateHash = hash;
+    // Full re-render only when structure changed (speaker list, panels).
+    // Playback/volume changes patch the existing DOM so scroll positions
+    // (vertical page + horizontal station rows) are never disturbed.
+    const structural = this._computeStructuralHash();
+    if (!this.shadowRoot.querySelector('ha-card') || structural !== this._lastStructuralHash) {
       this._render();
+    } else {
+      this._updateDynamic();
     }
+  }
+
+  _computeStructuralHash() {
+    const speakers = this._getSpeakers();
+    const parts = [
+      speakers.map(s => `${s.entity}:${s.name}`).join(','),
+      this._showDeviceVolumes ? '1' : '0'
+    ];
+    if (this._showDeviceVolumes) {
+      parts.push(speakers.filter(s => {
+        const st = this._hass.states[s.entity];
+        return st && (st.attributes.volume_level !== undefined ||
+                      ((st.attributes.supported_features || 0) & 4));
+      }).map(s => s.entity).join(','));
+    }
+    return parts.join('||');
   }
 
   _ensureNowPlayingHelper() {
@@ -1745,38 +1755,349 @@ class JukeboxCard extends HTMLElement {
     return speakers.sort((a, b) => a.name.localeCompare(b.name));
   }
 
-  _detectActiveSpeaker(speakers) {
-    if (!this._hass || !speakers.length) return null;
-    const playing = speakers.filter(sp => {
-      const st = this._hass.states[sp.entity];
-      return st && st.state === 'playing';
-    });
-    if (!playing.length) return null;
-    // Prefer groups (Cast groups have group_members with >1 entry)
-    const group = playing.find(sp => {
-      const members = this._hass.states[sp.entity].attributes.group_members;
-      return Array.isArray(members) && members.length > 1;
-    });
-    return (group || playing[0]).entity;
+  // True for Cast multi-room groups (device model "Google Cast Group").
+  // Falls back to group_members>1 when the registry lookup isn't available.
+  _isSpeakerGroup(entityId) {
+    try {
+      const ent = this._hass.entities && this._hass.entities[entityId];
+      const devId = ent && ent.device_id;
+      const dev = devId && this._hass.devices && this._hass.devices[devId];
+      if (dev && dev.model) return dev.model === 'Google Cast Group';
+    } catch (e) { /* ignore */ }
+    const st = this._hass.states[entityId];
+    const gm = st && st.attributes && st.attributes.group_members;
+    return Array.isArray(gm) && gm.length > 1;
   }
 
-  _resolveSelectedSpeaker() {
-    const speakers = this._getSpeakers();
-    if (!speakers.length) return null;
-    // Explicit user choice persisted in localStorage takes priority
-    const stored = localStorage.getItem('jukebox-card-speaker');
-    if (stored && speakers.find(s => s.entity === stored)) {
-      return stored;
+  // ── Group membership (see Zones engine below for selection state) ──
+  // Playback: group entity (native sync) + extras individually — members
+  // are NEVER cast to individually while their group is active (a second
+  // cast session on a member kills the group stream on that device).
+
+  // Cast integration exposes NO group membership (group_members always
+  // null) — mapping was measured empirically 2026-09-23 (volume-0 probe)
+  // and is re-learned at runtime whenever a group plays (_learnGroups).
+  // No built-in group membership — resolved from (in order): live HA
+  // group_members attribute, the `speaker_groups` card config option,
+  // then the map auto-learned the first time each group plays.
+  static get GROUP_MEMBERS() {
+    return {};
+  }
+
+  _groupMembers(groupEntity) {
+    const known = new Set(this._getSpeakers().map(s => s.entity));
+    const st = this._hass && this._hass.states[groupEntity];
+    const gm = st && st.attributes && st.attributes.group_members;
+    if (Array.isArray(gm) && gm.length) {
+      return gm.filter(id => id !== groupEntity && known.has(id));
     }
-    // No stored preference — pick whichever speaker is actively playing
-    const active = this._detectActiveSpeaker(speakers);
-    if (active) return active;
-    return speakers[0].entity;
+    const cfgMap = this._config && this._config.speaker_groups;
+    if (cfgMap && Array.isArray(cfgMap[groupEntity])) {
+      return cfgMap[groupEntity].filter(id => known.has(id));
+    }
+    let learned = null;
+    try { learned = JSON.parse(localStorage.getItem('jukebox-group-map') || 'null'); } catch (e) {}
+    const map = (learned && learned[groupEntity]) || this.constructor.GROUP_MEMBERS[groupEntity];
+    return Array.isArray(map) ? map.filter(id => known.has(id)) : [];
+  }
+
+  // Whenever a group is playing, note which individual speakers carry the
+  // same media_content_id — keeps the membership map current if Phil
+  // rearranges groups in the Google Home app.
+  _learnGroups(hass) {
+    try {
+      const speakers = this._getSpeakers();
+      const groups = speakers.filter(sp => this._isSpeakerGroup(sp.entity));
+      const solos = speakers.filter(sp => !this._isSpeakerGroup(sp.entity));
+      let learned = null;
+      try { learned = JSON.parse(localStorage.getItem('jukebox-group-map') || 'null'); } catch (e) {}
+      learned = learned || {};
+      let changed = false;
+      for (const g of groups) {
+        const gst = hass.states[g.entity];
+        if (!gst || gst.state !== 'playing') continue;
+        const gid = gst.attributes.media_content_id;
+        if (!gid) continue;
+        const members = solos.filter(sp => {
+          const st = hass.states[sp.entity];
+          return st && (st.state === 'playing' || st.state === 'buffering') &&
+                 st.attributes.media_content_id === gid;
+        }).map(sp => sp.entity).sort();
+        if (members.length > 1 && JSON.stringify(learned[g.entity]) !== JSON.stringify(members)) {
+          learned[g.entity] = members;
+          changed = true;
+        }
+      }
+      if (changed) localStorage.setItem('jukebox-group-map', JSON.stringify(learned));
+    } catch (e) { /* ignore */ }
+  }
+
+  // ── Zones engine (v3.0) ──
+  // A zone = one playback session: {id, g: group|null, s: [individual
+  // entity_ids, group members included], station: {name,url}|null,
+  // lastCmd}. station===null => draft zone being built via [+].
+  // STRICT no-steal (Phil): a speaker owned by one zone is disabled in
+  // every other zone; a group is selectable only when ALL members are
+  // free. Freeing = uncheck in the owning zone.
+
+  _zoneList() {
+    if (!this._zones) this._reconstructZones();
+    return this._zones;
+  }
+
+  _activeZone() {
+    const zones = this._zoneList();
+    let z = zones.find(zz => zz.id === this._activeZoneId);
+    if (!z) {
+      z = zones.find(zz => zz.station) || zones[0];
+      if (!z) z = this._newDraftZone();
+      this._activeZoneId = z.id;
+    }
+    return z;
+  }
+
+  _newDraftZone() {
+    const zones = this._zoneList();
+    let d = zones.find(z => !z.station);
+    if (d) return d;
+    d = { id: ++this._zoneSeq, g: null, s: [], station: null, lastCmd: Date.now(), user: true };
+    zones.push(d);
+    return d;
+  }
+
+  // A zone is "live" while its audio runs (or briefly after a command).
+  // Stopped zones persist as presets: they keep their chip + selection but
+  // no longer OWN their speakers — other zones may claim them.
+  _zoneLive(z) {
+    if (!z || !z.station) return false;
+    if (Date.now() - (z.lastCmd || 0) < 15000) return true;
+    const watch = new Set(this._zoneTargets(z).concat(z.s));
+    return [...watch].some(id => {
+      const st = this._hass && this._hass.states[id];
+      return st && ['playing', 'buffering', 'paused'].includes(st.state);
+    });
+  }
+
+  _zoneOwner(entityId) {
+    return this._zoneList().find(z => this._zoneLive(z) && z.s.includes(entityId)) || null;
+  }
+
+  // Commanded targets minus speakers owned by OTHER live zones (a stopped
+  // zone may have "lost" speakers to newer zones; never cast over them).
+  _effectiveTargets(z) {
+    const busy = id => { const o = this._zoneOwner(id); return o && o.id !== z.id; };
+    if (z.g) {
+      const members = this._groupMembers(z.g);
+      const freeM = members.filter(m => !busy(m));
+      const extras = z.s.filter(id => !members.includes(id) && !busy(id));
+      if (freeM.length === members.length) return [z.g].concat(extras);
+      return freeM.concat(extras);
+    }
+    return z.s.filter(id => !busy(id));
+  }
+
+  _persistZones() {
+    try {
+      const user = this._zoneList().filter(z => z.user);
+      localStorage.setItem('jukebox-zones-v1', JSON.stringify({
+        act: this._activeZoneId,
+        zones: user.map(z => ({ id: z.id, g: z.g, s: z.s, station: z.station }))
+      }));
+    } catch (e) { /* ignore */ }
+  }
+
+  _zoneName(z) {
+    const byId = {};
+    this._getSpeakers().forEach(sp => { byId[sp.entity] = sp.name; });
+    if (z.g) {
+      const members = new Set(this._groupMembers(z.g));
+      const extra = z.s.filter(id => !members.has(id)).length;
+      return (byId[z.g] || z.g) + (extra ? ` +${extra}` : '');
+    }
+    if (!z.s.length) return 'New';
+    const first = byId[z.s[0]] || z.s[0];
+    return z.s.length === 1 ? first : `${first} +${z.s.length - 1}`;
+  }
+
+  _zoneTargets(z) {
+    if (!z) return [];
+    if (z.g) {
+      const members = new Set(this._groupMembers(z.g));
+      return [z.g].concat(z.s.filter(id => !members.has(id)));
+    }
+    return [...z.s];
+  }
+
+  _playTargets() { return this._effectiveTargets(this._activeZone()); }
+
+  _isGroupFullySelected(groupEntity) { return this._activeZone().g === groupEntity; }
+
+  _groupAvailability(groupEntity) {
+    const z = this._activeZone();
+    const members = this._groupMembers(groupEntity);
+    if (!members.length) return { ok: false, why: 'members unknown' };
+    for (const m of members) {
+      const owner = this._zoneOwner(m);
+      if (owner && owner.id !== z.id) return { ok: false, why: 'in ' + this._zoneName(owner) };
+    }
+    return { ok: true, why: '' };
+  }
+
+  _speakerBusyIn(entityId) {
+    const z = this._activeZone();
+    const owner = this._zoneOwner(entityId);
+    return (owner && owner.id !== z.id) ? owner : null;
+  }
+
+  _toggleSpeaker(entityId) {
+    const z = this._activeZone();
+    if (this._speakerBusyIn(entityId)) return; // strict no-steal
+    const sel = new Set(z.s);
+    if (sel.has(entityId)) {
+      sel.delete(entityId);
+      // unchecking a member of the active group breaks the group
+      if (z.g && this._groupMembers(z.g).includes(entityId)) z.g = null;
+    } else {
+      sel.add(entityId);
+    }
+    z.s = [...sel];
+    z.lastCmd = Date.now();
+    this._gcZone(z);
+    this._persistZones();
+  }
+
+  _toggleGroup(groupEntity) {
+    const z = this._activeZone();
+    if (z.g === groupEntity) {
+      const members = new Set(this._groupMembers(groupEntity));
+      z.s = z.s.filter(id => !members.has(id));
+      z.g = null;
+    } else {
+      if (!this._groupAvailability(groupEntity).ok) return;
+      z.g = groupEntity;
+      z.s = [...this._groupMembers(groupEntity)];
+    }
+    z.lastCmd = Date.now();
+    this._gcZone(z);
+    this._persistZones();
+  }
+
+  _gcZone(z) {
+    if (z.station && !this._zoneTargets(z).length) this._removeZone(z);
+  }
+
+  _removeZone(z) {
+    this._zones = this._zoneList().filter(zz => zz.id !== z.id);
+    if (this._activeZoneId === z.id) {
+      const next = this._zones.find(zz => zz.station) || this._zones[0];
+      this._activeZoneId = next ? next.id : this._newDraftZone().id;
+    }
+    this._persistZones();
+  }
+
+  _switchZone(id) {
+    const zones = this._zoneList();
+    if (!zones.find(z => z.id === id)) return;
+    const cur = zones.find(z => z.id === this._activeZoneId);
+    this._activeZoneId = id;
+    // abandon an untouched draft when leaving it
+    if (cur && !cur.station && !cur.s.length && cur.id !== id) {
+      this._zones = zones.filter(z => z.id !== cur.id);
+    }
+    this._persistZones();
+  }
+
+  // Page load: seed persisted user zones (they survive reloads as
+  // presets), then let reconcile discover any external sessions.
+  _reconstructZones() {
+    this._zones = [];
+    this._zoneSeq = this._zoneSeq || 0;
+    const hass = this._hass;
+    if (!hass) return;
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem('jukebox-zones-v1') || 'null'); } catch (e) {}
+    const known = new Set(this._getSpeakers().map(sp => sp.entity));
+    if (saved && Array.isArray(saved.zones)) {
+      for (const z of saved.zones) {
+        const sel = (z.s || []).filter(id => known.has(id));
+        if (!sel.length && !z.station) continue;
+        this._zones.push({
+          id: z.id, g: (z.g && known.has(z.g)) ? z.g : null, s: sel,
+          station: z.station || null, lastCmd: 0, user: true
+        });
+        this._zoneSeq = Math.max(this._zoneSeq, z.id);
+      }
+      if (saved.act && this._zones.find(z => z.id === saved.act)) this._activeZoneId = saved.act;
+    }
+    this._reconcileZones(hass);
+  }
+
+  _stationFromState(st) {
+    const cid = st.attributes.media_content_id || '';
+    for (const c of this._getCategories()) {
+      const hit = (c.stations || []).find(x => x.url === cid);
+      if (hit) return { name: hit.name, url: hit.url };
+    }
+    return { name: st.attributes.media_title || 'External stream', url: cid };
+  }
+
+  // Reconcile external changes on every hass update: GC zones whose audio
+  // died elsewhere; surface sessions started outside the jukebox.
+  _reconcileZones(hass) {
+    const zones = this._zoneList();
+    // USER zones persist when stopped (deleted only via long-press);
+    // auto-discovered external zones still GC once dead.
+    for (const z of [...zones]) {
+      if (!z.station || z.user) continue;
+      const watch = new Set(this._zoneTargets(z).concat(z.s));
+      const alive = [...watch].some(id => {
+        const st = hass.states[id];
+        return st && ['playing', 'buffering', 'paused'].includes(st.state);
+      });
+      if (alive) { z.lastAlive = Date.now(); continue; }
+      const ref = Math.max(z.lastCmd || 0, z.lastAlive || 0);
+      if (Date.now() - ref > 25000) this._removeZone(z);
+    }
+    // discovery: a zone "claims" a playing speaker when the speaker is in
+    // its selection AND plays its station — everything else is external
+    const claimed = (sp, cid) => this._zoneList().some(z =>
+      z.s.includes(sp) && z.station && z.station.url === cid);
+    const solos = this._getSpeakers().filter(sp => !this._isSpeakerGroup(sp.entity));
+    const clusters = {};
+    for (const sp of solos) {
+      const st = hass.states[sp.entity];
+      if (!st || st.state !== 'playing') continue;
+      const cid = st.attributes.media_content_id || ('solo:' + sp.entity);
+      if (claimed(sp.entity, cid)) continue;
+      if (this._zoneOwner(sp.entity)) continue;
+      (clusters[cid] = clusters[cid] || []).push(sp.entity);
+    }
+    for (const cid of Object.keys(clusters)) {
+      const st = hass.states[clusters[cid][0]];
+      this._zones.push({ id: ++this._zoneSeq, g: null, s: clusters[cid], station: this._stationFromState(st), lastCmd: Date.now(), user: false });
+    }
+    const groups = this._getSpeakers().filter(sp => this._isSpeakerGroup(sp.entity));
+    for (const g of groups) {
+      if (this._zoneList().find(z => z.g === g.entity)) continue;
+      const st = hass.states[g.entity];
+      if (!st || st.state !== 'playing') continue;
+      const members = this._groupMembers(g.entity).filter(m => !this._zoneOwner(m));
+      this._zones.push({ id: ++this._zoneSeq, g: g.entity, s: members, station: this._stationFromState(st), lastCmd: Date.now(), user: false });
+    }
+  }
+
+  _speakerSummary() { return this._zoneName(this._activeZone()); }
+
+  _resolveSelectedSpeaker() {
+    const targets = this._playTargets();
+    return targets[0] || null;
   }
 
   // ── Category Management ──
 
   _getCategories() {
+    if (this._editCats) return this._editCats; // live edit session working copy
+    if (this._dirCats) return this._dirCats;   // unsaved directory additions
     if (this._config.categories && this._config.categories.length) {
       return this._config.categories;
     }
@@ -1787,8 +2108,10 @@ class JukeboxCard extends HTMLElement {
 
   _computeStateHash(hass) {
     const speakers = this._getSpeakers();
-    const parts = [`sel:${this._selectedSpeaker}`, `spk:${speakers.map(s => s.entity).join(',')}`];
+    const zs = this._zoneList().map(z => `${z.id}:${z.g || ''}:${z.s.join('.')}:${z.station ? z.station.url : ''}`).join(';');
+    const parts = [`zones:${zs}~act:${this._activeZoneId}`, `spk:${speakers.map(s => s.entity).join(',')}`];
     parts.push(`dvol:${this._showDeviceVolumes ? '1' : '0'}`);
+    parts.push(`cast:${this._castSpeakers ? this._castSpeakers.size : 0}`);
     for (const s of speakers) {
       const st = hass.states[s.entity];
       if (!st) { parts.push(''); continue; }
@@ -1803,33 +2126,12 @@ class JukeboxCard extends HTMLElement {
   }
 
   _getActiveStationUrl() {
-    if (!this._hass || !this._selectedSpeaker) return null;
-
-    const state = this._hass.states[this._selectedSpeaker];
-    if (!state || state.state !== 'playing') return null;
-
-    const contentId = state.attributes.media_content_id || '';
-    const title = state.attributes.media_title || '';
-    const allStations = this._getCategories().flatMap(c => c.stations);
-
-    // Direct URL match
-    const byUrl = allStations.find(s => s.url === contentId);
-    if (byUrl) return byUrl.url;
-
-    // Match by media_title
-    if (title) {
-      const byTitle = allStations.find(s => s.name === title);
-      if (byTitle) return byTitle.url;
-    }
-
-    // Fallback: now_playing_entity helper
-    const npe = this._hass.states['input_text.jukebox_now_playing'];
-    if (npe && npe.state && !['unknown', 'unavailable', ''].includes(npe.state)) {
-      const byNpe = allStations.find(s => s.name === npe.state);
-      if (byNpe) return byNpe.url;
-    }
-
-    return null;
+    // zone-scoped COMMANDED state: what this zone was told to play.
+    // (Gating this on live entity state made the banner drop during
+    // buffering and let the GC eat healthy zones.)
+    if (!this._hass) return null;
+    const z = this._activeZone();
+    return (z && z.station) ? z.station.url : null;
   }
 
   // ── Actions ──
@@ -1849,30 +2151,71 @@ class JukeboxCard extends HTMLElement {
     }
   }
 
-  async _playStation(station, categoryName) {
-    if (!this._hass || !this._selectedSpeaker) return;
+  async _castTo(targets, station, categoryName) {
+    if (!this._hass || !targets.length) return;
+    const streamTargets = [];
+    for (const target of targets) {
+      // Alexa devices need TuneIn voice command instead of direct stream
+      if (this._isAlexaDevice(target)) {
+        this._hass.callService('media_player', 'play_media', {
+          entity_id: target,
+          media_content_type: 'custom',
+          media_content_id: `play ${station.name} on tunein`
+        });
+        this._castSpeakers.add(target);
+      } else {
+        streamTargets.push(target);
+      }
+    }
 
-    const logoUrl = await this._getSignedImageUrl(station.logo);
+    if (streamTargets.length) {
+      const logoUrl = await this._getSignedImageUrl(station.logo);
 
-    const extra = {
-      metadata: {
-        metadataType: 3,
+      const extra = {
+        metadata: {
+          metadataType: 3,
+          title: station.name,
+          artist: categoryName || 'Internet Radio',
+          albumName: categoryName || 'Internet Radio',
+          ...(logoUrl ? { images: [{ url: logoUrl, width: 256, height: 256 }] } : {})
+        },
         title: station.name,
-        artist: categoryName || 'Internet Radio',
-        albumName: categoryName || 'Internet Radio',
-        ...(logoUrl ? { images: [{ url: logoUrl, width: 256, height: 256 }] } : {})
-      },
-      title: station.name,
-      stream_type: 'LIVE'
-    };
-    if (logoUrl) extra.thumb = logoUrl;
+        stream_type: 'LIVE'
+      };
+      if (logoUrl) extra.thumb = logoUrl;
 
-    this._hass.callService('media_player', 'play_media', {
-      entity_id: this._selectedSpeaker,
-      media_content_id: station.url,
-      media_content_type: 'audio/mp3',
-      extra
-    });
+      for (const target of streamTargets) {
+        this._hass.callService('media_player', 'play_media', {
+          entity_id: target,
+          media_content_id: station.url,
+          media_content_type: 'audio/mp3',
+          extra
+        });
+        this._castSpeakers.add(target);
+      }
+    }
+  }
+
+  async _playStation(station, categoryName) {
+    if (!this._hass) return;
+    const z = this._activeZone();
+    const targets = this._effectiveTargets(z);
+    if (!targets.length) {
+      // empty draft zone — hint at the speaker picker instead of playing
+      const btn = this.shadowRoot.querySelector('.speaker-btn');
+      if (btn) { btn.classList.add('nag'); setTimeout(() => btn.classList.remove('nag'), 900); }
+      return;
+    }
+    z.station = { name: station.name, url: station.url };
+    z.lastCmd = Date.now();
+    this._persistZones();
+
+    // Optimistic banner: show the tapped station immediately and hold it
+    // through the buffering gap so the banner never flashes back to idle
+    this._pendingStation = { name: station.name, url: station.url, ts: Date.now() };
+    this._updateDynamic();
+
+    await this._castTo(targets, station, categoryName);
 
     this._hass.callService('input_text', 'set_value', {
       entity_id: 'input_text.jukebox_now_playing',
@@ -1880,21 +2223,239 @@ class JukeboxCard extends HTMLElement {
     });
   }
 
+  // Station currently playing on the selection (or optimistically pending),
+  // as {station, category} from the configured lists — used to apply
+  // checkbox changes to LIVE playback.
+  _currentStationObj() {
+    const z = this._activeZone();
+    const url = this._pendingStation ? this._pendingStation.url : (z && z.station ? z.station.url : null);
+    if (!url) return null;
+    for (const c of this._getCategories()) {
+      const hit = (c.stations || []).find(st => st.url === url);
+      if (hit) return { station: hit, category: c.name };
+    }
+    // external/unknown stream — still re-castable
+    const name = (this._pendingStation && this._pendingStation.name) || (z && z.station && z.station.name) || 'Stream';
+    return { station: { name, url }, category: null };
+  }
+
+  // Live-apply a selection change while a station is playing: newly added
+  // targets start the current station, removed targets stop. When nothing
+  // is playing this is a no-op (selection only affects the next tap).
+  _applySelectionDiff(before, after, cur) {
+    if (!this._hass) return;
+    const b = new Set(before), a = new Set(after);
+    const removed = before.filter(id => !a.has(id));
+    const added = after.filter(id => !b.has(id));
+    // stops are unconditional — an undetectable station must never strand
+    // audio on a deselected target
+    for (const id of removed) {
+      this._hass.callService('media_player', 'media_stop', { entity_id: id });
+      this._castSpeakers.delete(id);
+    }
+    if (cur && added.length) this._castTo(added, cur.station, cur.category);
+  }
+
   _stopPlayback() {
-    if (!this._hass || !this._selectedSpeaker) return;
-    this._hass.callService('media_player', 'media_stop', {
-      entity_id: this._selectedSpeaker
+    if (!this._hass) return;
+    this._pendingStation = null;
+    const z = this._activeZone();
+    for (const target of this._effectiveTargets(z)) {
+      this._hass.callService('media_player', 'media_stop', { entity_id: target });
+      this._castSpeakers.delete(target);
+    }
+    // the zone SURVIVES as a stopped preset (chip dims); its speakers are
+    // now free for other zones. Delete = long-press the chip.
+    z.lastCmd = 0;
+    this._persistZones();
+    this._lastStateHash = null;
+    this._updateDynamic();
+  }
+
+  _stopCastSpeakers() {
+    for (const entityId of this._castSpeakers) {
+      this._hass.callService('media_player', 'media_stop', { entity_id: entityId });
+    }
+    this._castSpeakers.clear();
+    this._lastStateHash = null;
+    this._updateDynamic();
+  }
+
+  _isAlexaDevice(entityId) {
+    const state = this._hass.states[entityId];
+    if (!state) return false;
+    if (state.attributes.last_called !== undefined) return true;
+    if (entityId.includes('alexa') || entityId.includes('echo')) return true;
+    return false;
+  }
+
+  _openImageUpload(station, catIdx, stationIndex) {
+    const overlay = document.createElement('div');
+    overlay.className = 'image-upload-overlay';
+
+    const modal = document.createElement('div');
+    modal.className = 'image-upload-modal';
+
+    const title = document.createElement('div');
+    title.className = 'image-upload-title';
+    title.textContent = `Custom Image: ${station.name}`;
+    modal.appendChild(title);
+
+    const preview = document.createElement('canvas');
+    preview.className = 'image-upload-preview';
+    preview.width = 256;
+    preview.height = 256;
+    const ctx = preview.getContext('2d');
+    ctx.fillStyle = this._hashColor(station.name);
+    ctx.fillRect(0, 0, 256, 256);
+    ctx.fillStyle = 'rgba(255,255,255,0.3)';
+    ctx.font = '14px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('Tap to select image', 128, 128);
+    modal.appendChild(preview);
+
+    let sourceImg = null;
+    let scale = 1;
+    let panX = 0, panY = 0;
+    let dragging = false, lastX = 0, lastY = 0;
+
+    const drawPreview = () => {
+      if (!sourceImg) return;
+      ctx.clearRect(0, 0, 256, 256);
+      const w = sourceImg.width * scale;
+      const h = sourceImg.height * scale;
+      const x = (256 - w) / 2 + panX;
+      const y = (256 - h) / 2 + panY;
+      ctx.drawImage(sourceImg, x, y, w, h);
+    };
+
+    // Pan
+    preview.addEventListener('pointerdown', (e) => {
+      if (!sourceImg) { fileInput.click(); return; }
+      dragging = true; lastX = e.clientX; lastY = e.clientY;
+      preview.setPointerCapture(e.pointerId);
     });
+    preview.addEventListener('pointermove', (e) => {
+      if (!dragging) return;
+      panX += e.clientX - lastX;
+      panY += e.clientY - lastY;
+      lastX = e.clientX; lastY = e.clientY;
+      drawPreview();
+    });
+    preview.addEventListener('pointerup', () => { dragging = false; });
+
+    // Zoom
+    preview.addEventListener('wheel', (e) => {
+      if (!sourceImg) return;
+      e.preventDefault();
+      scale *= e.deltaY < 0 ? 1.1 : 0.9;
+      scale = Math.max(0.1, Math.min(5, scale));
+      drawPreview();
+    });
+
+    const fileInput = document.createElement('input');
+    fileInput.type = 'file';
+    fileInput.accept = 'image/*';
+    fileInput.style.display = 'none';
+    fileInput.addEventListener('change', () => {
+      const file = fileInput.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        const img = new Image();
+        img.onload = () => {
+          sourceImg = img;
+          const fitScale = Math.max(256 / img.width, 256 / img.height);
+          scale = fitScale;
+          panX = 0; panY = 0;
+          drawPreview();
+        };
+        img.src = reader.result;
+      };
+      reader.readAsDataURL(file);
+    });
+    modal.appendChild(fileInput);
+
+    const btnRow = document.createElement('div');
+    btnRow.className = 'image-upload-buttons';
+
+    const selectBtn = document.createElement('button');
+    selectBtn.className = 'upload-btn';
+    selectBtn.innerHTML = '<ha-icon icon="mdi:image-plus"></ha-icon><span>Select Image</span>';
+    selectBtn.addEventListener('click', () => fileInput.click());
+    btnRow.appendChild(selectBtn);
+
+    const saveBtn = document.createElement('button');
+    saveBtn.className = 'upload-btn save';
+    saveBtn.innerHTML = '<ha-icon icon="mdi:content-save"></ha-icon><span>Save</span>';
+    saveBtn.addEventListener('click', () => {
+      if (!sourceImg) return;
+      preview.toBlob((blob) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const dataUri = reader.result;
+          if (!this._config.custom_logos) this._config.custom_logos = {};
+          this._config.custom_logos[station.url] = dataUri;
+          this._fireConfigChanged();
+          this._saveCardConfig({ custom_logos: this._config.custom_logos }, false);
+          overlay.remove();
+          this._lastStateHash = null;
+          this._render();
+        };
+        reader.readAsDataURL(blob);
+      }, 'image/jpeg', 0.85);
+    });
+    btnRow.appendChild(saveBtn);
+
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'upload-btn remove';
+    removeBtn.innerHTML = '<ha-icon icon="mdi:delete"></ha-icon><span>Remove</span>';
+    removeBtn.addEventListener('click', () => {
+      if (this._config.custom_logos) {
+        delete this._config.custom_logos[station.url];
+        if (Object.keys(this._config.custom_logos).length === 0) delete this._config.custom_logos;
+        this._fireConfigChanged();
+        this._saveCardConfig({ custom_logos: this._config.custom_logos || null }, false);
+      }
+      overlay.remove();
+      this._lastStateHash = null;
+      this._render();
+    });
+    btnRow.appendChild(removeBtn);
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.className = 'upload-btn';
+    cancelBtn.innerHTML = '<ha-icon icon="mdi:close"></ha-icon><span>Cancel</span>';
+    cancelBtn.addEventListener('click', () => overlay.remove());
+    btnRow.appendChild(cancelBtn);
+
+    modal.appendChild(btnRow);
+    overlay.appendChild(modal);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+    this.shadowRoot.appendChild(overlay);
+  }
+
+  _fireConfigChanged() {
+    this.dispatchEvent(new CustomEvent('config-changed', {
+      bubbles: true,
+      composed: true,
+      detail: { config: { ...this._config } }
+    }));
   }
 
   _setVolume(level) {
-    if (!this._hass || !this._selectedSpeaker) return;
+    if (!this._hass) return;
+    // master slider: group entity (spreads across members) + extras
+    const sel = this._playTargets();
+    if (!sel.length) return;
     clearTimeout(this._volumeTimeout);
     this._volumeTimeout = setTimeout(() => {
-      this._hass.callService('media_player', 'volume_set', {
-        entity_id: this._selectedSpeaker,
-        volume_level: level
-      });
+      for (const id of sel) {
+        this._hass.callService('media_player', 'volume_set', {
+          entity_id: id,
+          volume_level: level
+        });
+      }
     }, 100);
   }
 
@@ -1931,6 +2492,9 @@ class JukeboxCard extends HTMLElement {
     this._selectedSpeaker = this._resolveSelectedSpeaker();
 
     const activeUrl = this._getActiveStationUrl();
+    this._otherZoneUrls = new Set(this._zoneList()
+      .filter(z => z.id !== this._activeZone().id && z.station)
+      .map(z => z.station.url));
     const speakerState = this._hass.states[this._selectedSpeaker];
     const isPlaying = speakerState && speakerState.state === 'playing';
     const volume = speakerState ? (speakerState.attributes.volume_level || 0) : 0;
@@ -1952,10 +2516,24 @@ class JukeboxCard extends HTMLElement {
     root.querySelectorAll('.station-scroll').forEach(el => {
       scrollPositions[el.dataset.category] = el.scrollLeft;
     });
+    const prevArea = root.querySelector('.stations-area');
+    const stationsScrollTop = prevArea ? prevArea.scrollTop : undefined;
 
     root.innerHTML = '';
 
     const card = document.createElement('ha-card');
+    // Optional mural background: painted on the CARD so it sits behind
+    // everything (banner, speaker controls AND the station list). The
+    // stations area scrolls its content over it — the image stays
+    // still. Dark overlay keeps all text/tiles readable.
+    if (config.background_image) {
+      const fit = config.background_fit || 'fill';
+      const size = fit === 'fill' ? 'cover' : fit === 'fit' ? 'contain' : fit === 'stretch' ? '100% 100%' : 'auto';
+      const dim = config.background_dim !== undefined ? config.background_dim : 0.62;
+      card.style.background =
+        `linear-gradient(rgba(12,12,16,${dim}), rgba(12,12,16,${dim})), ` +
+        `url('${config.background_image}') center / ${size} no-repeat fixed`;
+    }
 
     const style = document.createElement('style');
     style.textContent = this._getStyles();
@@ -1964,11 +2542,33 @@ class JukeboxCard extends HTMLElement {
     const container = document.createElement('div');
     container.className = 'jukebox';
     container.style.setProperty('--columns', config.columns);
+    this._containerEl = container;
+    container.addEventListener('scroll', ev => {
+      const t = ev.target;
+      const isRow = t && t.classList && t.classList.contains('station-scroll');
+      const isMenu = t && t.classList && t.classList.contains('speaker-menu');
+      if (this._speakerMenuOpen && !isMenu) this._closeSpeakerMenu();
+      // vertical scrolling resets every playlist row to its first station
+      // — but never during edit mode (fights drag auto-scroll) or when the
+      // render pipeline is programmatically restoring positions
+      if (!isRow && !isMenu && !this._vScrollReset && !this._jiggle && !this._suppressRowReset) {
+        this._vScrollReset = true;
+        setTimeout(() => { this._vScrollReset = false; }, 600);
+        this.shadowRoot.querySelectorAll('.station-scroll').forEach(sc => {
+          if (sc.scrollLeft > 0) sc.scrollTo({ left: 0, behavior: 'smooth' });
+        });
+      }
+    }, { capture: true, passive: true });
     container.style.setProperty('--tile-height', `${config.tile_height}px`);
 
     // ── Controls ──
     const controls = document.createElement('div');
     controls.className = 'controls';
+
+    // Zone chips: one chip per playback session + [+] for a new zone
+    const zoneBar = document.createElement('div');
+    zoneBar.className = 'zone-chips';
+    controls.appendChild(zoneBar);
 
     if (speakers.length > 0) {
       // Speaker select
@@ -1977,28 +2577,118 @@ class JukeboxCard extends HTMLElement {
       const spkIcon = document.createElement('ha-icon');
       spkIcon.setAttribute('icon', 'mdi:speaker');
       speakerWrap.appendChild(spkIcon);
-      const select = document.createElement('select');
-      select.className = 'speaker-select';
-      for (const sp of speakers) {
-        const opt = document.createElement('option');
-        opt.value = sp.entity;
-        opt.textContent = sp.name;
-        if (sp.entity === this._selectedSpeaker) opt.selected = true;
-        select.appendChild(opt);
-      }
-      select.addEventListener('change', e => {
-        this._selectedSpeaker = e.target.value;
-        localStorage.setItem('jukebox-card-speaker', this._selectedSpeaker);
-        this._lastStateHash = null;
-        this._render();
+      // Multi-select dropdown: button + checkbox menu. Groups act as
+      // toggles for all their members; individuals check independently.
+      const btn = document.createElement('button');
+      btn.className = 'speaker-btn';
+      btn.innerHTML = `<span class="speaker-btn-label"></span><span class="speaker-caret">▾</span>`;
+      const menu = document.createElement('div');
+      menu.className = 'speaker-menu';
+
+      const groupSpeakers = speakers.filter(sp => this._isSpeakerGroup(sp.entity));
+      const soloSpeakers = speakers.filter(sp => !this._isSpeakerGroup(sp.entity));
+      const addRows = (list, header, isGroup) => {
+        if (!list.length) return;
+        if (header) {
+          const hd = document.createElement('div');
+          hd.className = 'speaker-menu-header';
+          hd.textContent = header;
+          menu.appendChild(hd);
+        }
+        for (const sp of list) {
+          const row = document.createElement('div');
+          row.className = 'speaker-item';
+          if (isGroup) { row.dataset.group = sp.entity; } else { row.dataset.entity = sp.entity; }
+          row.innerHTML = `<span class="spk-check"></span><span class="spk-name">${this._esc ? this._esc(sp.name) : sp.name}</span><span class="spk-busy"></span>`;
+          row.addEventListener('click', e => {
+            e.stopPropagation();
+            if (row.classList.contains('disabled')) return; // strict no-steal
+            const before = this._playTargets();
+            const cur = this._currentStationObj();
+            if (isGroup) { this._toggleGroup(sp.entity); } else { this._toggleSpeaker(sp.entity); }
+            this._selectedSpeaker = this._playTargets()[0] || null;
+            this._applySelectionDiff(before, this._playTargets(), cur);
+            this._syncSpeakerMenu(this.shadowRoot);
+            this._lastStateHash = null;
+          });
+          // Per-speaker volume, shown only while checked (individuals only —
+          // a group's members each expose their own slider)
+          if (!isGroup) {
+            const st = this._hass.states[sp.entity];
+            // Fully Kiosk players don't report volume_level while idle —
+            // show a mid slider so the control is still usable
+            const devVol = st && st.attributes.volume_level !== undefined ? (st.attributes.volume_level || 0) : 0.7;
+            const vw = document.createElement('div');
+            vw.className = 'spk-vol-wrap';
+            const sl = document.createElement('input');
+            sl.type = 'range';
+            sl.className = 'volume-slider spk-vol';
+            sl.min = '0'; sl.max = '1'; sl.step = '0.02';
+            sl.value = devVol;
+            const pct = document.createElement('span');
+            pct.className = 'vol-pct spk-vol-pct';
+            pct.textContent = `${Math.round(devVol * 100)}%`;
+            const entityId = sp.entity;
+            ['click', 'mousedown', 'touchstart', 'pointerdown'].forEach(evt =>
+              sl.addEventListener(evt, e => e.stopPropagation()));
+            sl.addEventListener('input', e => {
+              e.stopPropagation();
+              this._draggingVolume = true;
+              this._setDeviceVolume(entityId, parseFloat(e.target.value));
+              pct.textContent = `${Math.round(e.target.value * 100)}%`;
+            });
+            sl.addEventListener('change', e => { e.stopPropagation(); this._draggingVolume = false; });
+            vw.appendChild(sl);
+            vw.appendChild(pct);
+            row.appendChild(vw);
+          }
+          menu.appendChild(row);
+        }
+      };
+      const both = groupSpeakers.length && soloSpeakers.length;
+      addRows(groupSpeakers, both ? 'Speaker Groups' : null, true);
+      addRows(soloSpeakers, both ? 'Individual Speakers' : null, false);
+
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        this._speakerMenuOpen = !this._speakerMenuOpen;
+        menu.classList.toggle('open', this._speakerMenuOpen);
       });
-      speakerWrap.appendChild(select);
+      if (!this._speakerDocClose) {
+        this._speakerDocClose = () => {
+          if (!this._speakerMenuOpen) return;
+          this._speakerMenuOpen = false;
+          const m = this.shadowRoot.querySelector('.speaker-menu');
+          if (m) m.classList.remove('open');
+          this._updateDynamic();
+        };
+        document.addEventListener('click', this._speakerDocClose);
+      }
+      if (this._speakerMenuOpen) menu.classList.add('open');
+
+      speakerWrap.appendChild(btn);
+      speakerWrap.appendChild(menu);
+      const dirBtn = document.createElement('button');
+      dirBtn.className = 'dir-btn';
+      dirBtn.title = 'Settings';
+      const dirIco = document.createElement('ha-icon');
+      dirIco.setAttribute('icon', 'mdi:cog');
+      dirBtn.appendChild(dirIco);
+      dirBtn.addEventListener('click', e => {
+        e.stopPropagation();
+        this._closeSpeakerMenu();
+        this._openSettingsMenu(speakerWrap, dirBtn);
+      });
+      speakerWrap.appendChild(dirBtn);
       controls.appendChild(speakerWrap);
+      // initial label + checks
+      setTimeout(() => { this._syncSpeakerMenu(this.shadowRoot); this._syncZoneChips(this.shadowRoot); }, 0);
 
       // Volume
       const volWrap = document.createElement('div');
       volWrap.className = 'volume-wrap';
       const volIcon = document.createElement('ha-icon');
+      volIcon.className = 'vol-icon';
       volIcon.setAttribute('icon',
         volume === 0 ? 'mdi:volume-off' :
         volume < 0.5 ? 'mdi:volume-medium' : 'mdi:volume-high'
@@ -2022,60 +2712,6 @@ class JukeboxCard extends HTMLElement {
       volWrap.appendChild(volPct);
       controls.appendChild(volWrap);
 
-      // ── Per-device volume toggle + panel ──
-      const devVolToggle = document.createElement('div');
-      devVolToggle.className = 'device-vol-toggle';
-      devVolToggle.innerHTML = `<span class="device-vol-chevron">${this._showDeviceVolumes ? '\u25BC' : '\u25B6'}</span> Individual Speakers`;
-      devVolToggle.addEventListener('click', () => {
-        this._showDeviceVolumes = !this._showDeviceVolumes;
-        this._lastStateHash = null;
-        this._render();
-      });
-      controls.appendChild(devVolToggle);
-
-      if (this._showDeviceVolumes) {
-        const devVolPanel = document.createElement('div');
-        devVolPanel.className = 'device-volumes';
-        for (const sp of speakers) {
-          const st = this._hass.states[sp.entity];
-          if (!st || st.attributes.volume_level === undefined) continue;
-          const devVol = st.attributes.volume_level || 0;
-
-          const row = document.createElement('div');
-          row.className = 'device-vol-row';
-
-          const label = document.createElement('div');
-          label.className = 'device-vol-label';
-          label.textContent = sp.name;
-          row.appendChild(label);
-
-          const sliderWrap = document.createElement('div');
-          sliderWrap.className = 'device-vol-slider-wrap';
-
-          const devSlider = document.createElement('input');
-          devSlider.type = 'range';
-          devSlider.className = 'volume-slider device-vol-slider';
-          devSlider.min = '0'; devSlider.max = '1'; devSlider.step = '0.02';
-          devSlider.value = devVol;
-          const devPct = document.createElement('span');
-          devPct.className = 'vol-pct';
-          devPct.textContent = `${Math.round(devVol * 100)}%`;
-
-          const entityId = sp.entity;
-          devSlider.addEventListener('input', e => {
-            this._draggingVolume = true;
-            this._setDeviceVolume(entityId, parseFloat(e.target.value));
-            devPct.textContent = `${Math.round(e.target.value * 100)}%`;
-          });
-          devSlider.addEventListener('change', () => { this._draggingVolume = false; });
-
-          sliderWrap.appendChild(devSlider);
-          sliderWrap.appendChild(devPct);
-          row.appendChild(sliderWrap);
-          devVolPanel.appendChild(row);
-        }
-        controls.appendChild(devVolPanel);
-      }
     } else {
       const noSpk = document.createElement('div');
       noSpk.className = 'no-speakers';
@@ -2085,32 +2721,47 @@ class JukeboxCard extends HTMLElement {
 
     container.appendChild(controls);
 
-    // ── Now Playing Banner ──
-    if (activeStationName && isPlaying) {
-      const banner = document.createElement('div');
-      banner.className = 'now-playing';
-      const npIcon = document.createElement('ha-icon');
-      npIcon.setAttribute('icon', 'mdi:radio');
-      banner.appendChild(npIcon);
-      const npText = document.createElement('span');
-      npText.textContent = activeStationName;
-      banner.appendChild(npText);
-      const stopBtn = document.createElement('ha-icon');
-      stopBtn.setAttribute('icon', 'mdi:stop');
-      stopBtn.className = 'stop-btn';
-      stopBtn.addEventListener('click', () => this._stopPlayback());
-      banner.appendChild(stopBtn);
-      container.appendChild(banner);
-    }
+    // ── Now Playing Banner (always rendered to prevent layout jump) ──
+    const banner = document.createElement('div');
+    banner.className = 'now-playing';
+    const bs = this._bannerState(activeUrl, activeStationName, isPlaying);
+    this._fillBanner(banner, bs.name, bs.playing);
+    container.appendChild(banner);
 
-    // ── Categories ──
+    // ── Stop Cast Button (always in DOM, hidden when no cast speakers) ──
+    const stopCast = document.createElement('button');
+    stopCast.className = 'stop-cast-btn';
+    const stopIco = document.createElement('ha-icon');
+    stopIco.setAttribute('icon', 'mdi:stop');
+    stopCast.appendChild(stopIco);
+    const stopCastLabel = document.createElement('span');
+    stopCastLabel.className = 'stop-cast-label';
+    stopCast.appendChild(stopCastLabel);
+    stopCast.addEventListener('click', () => this._stopCastSpeakers());
+    this._updateStopCastBtn(stopCast);
+    container.appendChild(stopCast);
+
+    // ── Categories (vertically scrollable; controls above stay fixed) ──
+    const stationsArea = document.createElement('div');
+    stationsArea.className = 'stations-area';
+
     categories.forEach((cat, catIdx) => {
       const section = document.createElement('div');
       section.className = 'category';
+      section.dataset.cat = String(catIdx);
 
       const header = document.createElement('div');
       header.className = 'cat-header';
       header.textContent = cat.name;
+      header.dataset.cat = String(catIdx);
+      header.addEventListener('contextmenu', e => e.preventDefault());
+      let hTimer = null;
+      header.addEventListener('pointerdown', (e) => {
+        if (this._jiggle) return;
+        hTimer = setTimeout(() => { hTimer = null; this._openPlaylistManager(); }, 500);
+      });
+      ['pointerup', 'pointerleave', 'pointercancel'].forEach(evn =>
+        header.addEventListener(evn, () => { if (hTimer) { clearTimeout(hTimer); hTimer = null; } }));
       section.appendChild(header);
 
       const scroller = document.createElement('div');
@@ -2128,13 +2779,19 @@ class JukeboxCard extends HTMLElement {
         const page = document.createElement('div');
         page.className = 'station-page';
 
-        pageStations.forEach(station => {
+        pageStations.forEach((station, stationIndex) => {
           const tile = document.createElement('div');
           tile.className = 'station-tile';
+          if (this._otherZoneUrls && this._otherZoneUrls.has(station.url)) tile.classList.add('other-zone');
+          tile.dataset.url = station.url;
           if (activeUrl && station.url === activeUrl) tile.classList.add('active');
 
-          if (station.logo) {
-            tile.style.backgroundImage = `url(${station.logo})`;
+          // Custom logo takes priority over station.logo
+          const customLogo = this._config.custom_logos && this._config.custom_logos[station.url];
+          const logoUrl = customLogo || station.logo;
+
+          if (logoUrl) {
+            tile.style.backgroundImage = `url(${logoUrl})`;
             tile.style.backgroundColor = this._hashColor(station.name);
             tile.classList.add('has-logo');
           } else {
@@ -2151,7 +2808,53 @@ class JukeboxCard extends HTMLElement {
           label.textContent = station.name;
           tile.appendChild(label);
 
-          tile.addEventListener('click', () => this._playStation(station, cat.name));
+          const xBadge = document.createElement('div');
+          xBadge.className = 'tile-x';
+          xBadge.innerHTML = '&times;';
+          xBadge.addEventListener('pointerdown', e => e.stopPropagation());
+          xBadge.addEventListener('pointerup', e => e.stopPropagation());
+          xBadge.addEventListener('click', e => {
+            e.stopPropagation();
+            if (this._jiggle !== 'stations') return;
+            this._editDeleteStation(+tile.dataset.cat, +tile.dataset.abs);
+          });
+          tile.appendChild(xBadge);
+
+          // Tap = play. Hard-press = enter rearrange (jiggle) mode — it
+          // must NOT play. While jiggling: drag = move, tap = artwork
+          // editor (the old long-press image-upload lives there now).
+          tile.dataset.cat = String(catIdx);
+          tile.dataset.abs = String(cat.stations.indexOf(station));
+          let pressTimer = null;
+          let longPressTriggered = false;
+          tile.addEventListener('contextmenu', e => e.preventDefault());
+          tile.addEventListener('pointerdown', (e) => {
+            if (this._jiggle === 'stations') { this._dragStart(e, tile, 'stations'); return; }
+            if (this._jiggle) return;
+            longPressTriggered = false;
+            pressTimer = setTimeout(() => {
+              pressTimer = null;
+              longPressTriggered = true;
+              e.preventDefault();
+              this._enterJiggle('stations');
+            }, 500);
+          });
+          tile.addEventListener('pointerup', () => {
+            if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; }
+            if (longPressTriggered) return;
+            if (this._jiggle === 'stations') {
+              if (!this._dragMoved) this._openImageUpload(station, catIdx, stationIndex);
+              return;
+            }
+            if (this._jiggle) return;
+            this._playStation(station, cat.name);
+          });
+          tile.addEventListener('pointerleave', () => { if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; } });
+          tile.addEventListener('pointermove', (e) => {
+            if (pressTimer && (Math.abs(e.movementX) > 5 || Math.abs(e.movementY) > 5)) {
+              clearTimeout(pressTimer); pressTimer = null;
+            }
+          });
           page.appendChild(tile);
         });
 
@@ -2190,16 +2893,1190 @@ class JukeboxCard extends HTMLElement {
         section.appendChild(dots);
       }
 
-      container.appendChild(section);
+      stationsArea.appendChild(section);
     });
+
+    container.appendChild(stationsArea);
 
     card.appendChild(container);
     root.appendChild(card);
 
-    // Restore scroll positions
-    root.querySelectorAll('.station-scroll').forEach(el => {
-      const pos = scrollPositions[el.dataset.category];
-      if (pos) el.scrollLeft = pos;
+    // Restore scroll positions (re-apply after layout so scroll-snap can't reset them)
+    const restoreScroll = () => {
+      root.querySelectorAll('.station-scroll').forEach(el => {
+        const pos = scrollPositions[el.dataset.category];
+        if (pos !== undefined && el.scrollLeft !== pos) el.scrollLeft = pos;
+      });
+      if (stationsScrollTop !== undefined) {
+        const area = root.querySelector('.stations-area');
+        if (area && area.scrollTop !== stationsScrollTop) area.scrollTop = stationsScrollTop;
+      }
+    };
+    this._suppressRowReset = true;
+    restoreScroll();
+    requestAnimationFrame(() => {
+      restoreScroll();
+      requestAnimationFrame(() => { this._suppressRowReset = false; });
+    });
+    this._sizeCard();
+    requestAnimationFrame(() => this._sizeCard());
+
+    this._lastStructuralHash = this._computeStructuralHash();
+  }
+
+  // Returns what the banner should display, holding the just-tapped station
+  // (active styling) through the buffering gap instead of flashing idle.
+  _bannerState(activeUrl, activeStationName, isPlaying) {
+    if (this._pendingStation) {
+      const p = this._pendingStation;
+      if (activeUrl === p.url || Date.now() - p.ts > 20000) {
+        this._pendingStation = null;
+      } else {
+        return { name: p.name, playing: true };
+      }
+    }
+    return { name: activeStationName, playing: isPlaying };
+  }
+
+  _fillBanner(banner, activeStationName, isPlaying) {
+    const key = `${isPlaying ? 1 : 0}|${activeStationName || ''}`;
+    if (banner.dataset.key === key) return;
+    banner.dataset.key = key;
+    banner.innerHTML = '';
+    banner.classList.toggle('active', !!(activeStationName && isPlaying));
+    banner.classList.toggle('idle', !(activeStationName && isPlaying));
+    const npIcon = document.createElement('ha-icon');
+    npIcon.setAttribute('icon', 'mdi:radio');
+    banner.appendChild(npIcon);
+    const npText = document.createElement('span');
+    npText.textContent = (activeStationName && isPlaying) ? activeStationName : 'Select a station to play';
+    banner.appendChild(npText);
+    // Stop button always in layout so the banner height never changes
+    const stopBtn = document.createElement('ha-icon');
+    stopBtn.setAttribute('icon', 'mdi:stop');
+    stopBtn.className = 'stop-btn';
+    if (activeStationName && isPlaying) {
+      stopBtn.addEventListener('click', () => this._stopPlayback());
+    } else {
+      stopBtn.style.visibility = 'hidden';
+    }
+    banner.appendChild(stopBtn);
+  }
+
+  _updateStopCastBtn(btn) {
+    // visibility (not display) so the space stays reserved and nothing below jumps
+    const n = this._castSpeakers ? this._castSpeakers.size : 0;
+    btn.style.visibility = n > 0 ? '' : 'hidden';
+    const label = btn.querySelector('.stop-cast-label');
+    if (label) label.textContent = ` Stop ${n} Speaker${n > 1 ? 's' : ''}`;
+  }
+
+  // In-place update for playback/volume state changes — leaves the DOM tree
+  _syncSpeakerMenu(root) {
+    const label = root.querySelector('.speaker-btn-label');
+    if (label) label.textContent = this._speakerSummary();
+    const z = this._activeZone();
+    const sel = new Set(z.s);
+    root.querySelectorAll('.speaker-item').forEach(row => {
+      const check = row.querySelector('.spk-check');
+      if (!check) return;
+      let on, busyNote = '';
+      if (row.dataset.group) {
+        on = z.g === row.dataset.group;
+        if (!on) {
+          const avail = this._groupAvailability(row.dataset.group);
+          if (!avail.ok) busyNote = avail.why;
+        }
+      } else {
+        on = sel.has(row.dataset.entity);
+        const owner = this._speakerBusyIn(row.dataset.entity);
+        if (owner) busyNote = 'in ' + this._zoneName(owner);
+      }
+      check.classList.toggle('checked', on);
+      row.classList.toggle('checked', on);
+      row.classList.toggle('disabled', !!busyNote);
+      const busyEl = row.querySelector('.spk-busy');
+      if (busyEl) busyEl.textContent = busyNote;
+      if (!this._draggingVolume && row.dataset.entity) {
+        const st = this._hass.states[row.dataset.entity];
+        if (st && st.attributes.volume_level !== undefined) {
+          const v = st.attributes.volume_level || 0;
+          const sl = row.querySelector('.spk-vol');
+          if (sl) sl.value = v;
+          const pct = row.querySelector('.spk-vol-pct');
+          if (pct) pct.textContent = `${Math.round(v * 100)}%`;
+        }
+      }
+    });
+  }
+
+  // ── Edit mode (jiggle) ──
+  // A SESSION: hard-press enters edit mode; every move/delete mutates a
+  // working copy (this._editCats) with a full undo stack; nothing is
+  // saved until "Exit Edit Mode" — then it all persists at once and the
+  // undo history is gone (per Phil).
+
+  _enterJiggle(kind) {
+    if (!this._canEdit()) return;
+    if (!this._editCats) {
+      this._editCats = this._getCategories().map(c => ({ ...c, stations: [...c.stations] }));
+      this._editUndo = [];
+    }
+    this._jiggle = kind;
+    this._dragMoved = false;
+    if (this._containerEl) {
+      this._containerEl.classList.remove('jiggle-stations', 'jiggle-playlists');
+      this._containerEl.classList.add('jiggle-' + kind);
+    }
+    this._mountEditBar();
+    this._syncOverlayState();
+  }
+
+  _exitJiggle() {
+    if (this._containerEl) {
+      this._containerEl.classList.remove('jiggle-stations', 'jiggle-playlists');
+    }
+    const bar = this.shadowRoot.querySelector('.edit-bar');
+    if (bar) bar.remove();
+    this._jiggle = null;
+    this._setDropTarget(null);
+    this._syncOverlayState();
+  }
+
+  _exitJiggleAndSave() {
+    const cats = this._editCats;
+    this._editCats = null;
+    this._editUndo = null;
+    this._exitJiggle();
+    if (cats) this._saveCategories(cats, true);
+  }
+
+  _editSnapshot() {
+    if (this._editUndo) {
+      this._editUndo.push(this._editCats.map(c => ({ ...c, stations: [...c.stations] })));
+    }
+  }
+
+  _editUndoLast() {
+    if (!this._editUndo || !this._editUndo.length) return;
+    this._editCats = this._editUndo.pop();
+    this._editRefresh();
+  }
+
+  _editDeleteStation(catIdx, absIdx) {
+    if (!this._editCats || !this._editCats[catIdx]) return;
+    this._editSnapshot();
+    this._editCats[catIdx].stations.splice(absIdx, 1);
+    this._editRefresh();
+  }
+
+  // re-render the grid from the working copy while STAYING in edit mode
+  _editRefresh() {
+    this._lastStructuralHash = null;
+    this._render();
+    if (this._jiggle && this._containerEl) {
+      this._containerEl.classList.add('jiggle-' + this._jiggle);
+    }
+    this._mountEditBar();
+  }
+
+  _mountEditBar() {
+    if (!this._containerEl) return;
+    this._containerEl.style.position = 'relative';
+    let bar = this.shadowRoot.querySelector('.edit-bar');
+    if (!bar) {
+      bar = document.createElement('div');
+      bar.className = 'edit-bar';
+      const undo = document.createElement('button');
+      undo.className = 'edit-undo';
+      undo.textContent = 'Undo Last Change';
+      undo.addEventListener('click', e => { e.stopPropagation(); this._editUndoLast(); });
+      const exit = document.createElement('button');
+      exit.className = 'edit-exit';
+      exit.textContent = 'Exit Edit Mode';
+      exit.addEventListener('click', e => { e.stopPropagation(); this._exitJiggleAndSave(); });
+      bar.appendChild(undo);
+      bar.appendChild(exit);
+      this._containerEl.appendChild(bar);
+    }
+    const u = bar.querySelector('.edit-undo');
+    if (u) u.disabled = !(this._editUndo && this._editUndo.length);
+  }
+
+  _setDropTarget(t) {
+    if (this._dropTargetEl) this._dropTargetEl.classList.remove('drop-target');
+    this._dropTargetEl = t;
+    if (t) t.classList.add('drop-target');
+  }
+
+  // Drag = a fixed-position ghost that follows the finger ANYWHERE
+  // (original stays put, dimmed), with edge auto-scroll: vertical on the
+  // stations area, horizontal on whichever row is under the finger.
+  _dragStart(e, el, kind) {
+    e.preventDefault();
+    const startX = e.clientX, startY = e.clientY;
+    this._dragMoved = false;
+    let ghost = null;
+    const mkGhost = () => {
+      const src = kind === 'playlists' ? (el.querySelector('.cat-header') || el) : el;
+      const r = src.getBoundingClientRect();
+      ghost = src.cloneNode(true);
+      ghost.classList.add('drag-ghost');
+      ghost.style.cssText = `position:fixed;left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;z-index:9999;pointer-events:none;margin:0;opacity:0.92;box-shadow:0 8px 24px rgba(0,0,0,0.6);`;
+      (this._containerEl || this.shadowRoot).appendChild(ghost);
+      el.classList.add('drag-src');
+    };
+    this._dragPt = { x: startX, y: startY };
+    let rafId = null;
+    const auto = () => {
+      if (this._dragMoved) {
+        const pt = this._dragPt;
+        const va = this.shadowRoot.querySelector('.stations-area');
+        if (va) {
+          const r = va.getBoundingClientRect();
+          if (pt.y < r.top + 70) va.scrollTop -= 14;
+          else if (pt.y > r.bottom - 70) va.scrollTop += 14;
+        }
+        const under = this.shadowRoot.elementFromPoint(pt.x, pt.y);
+        const rowEl = under && under.closest && under.closest('.station-scroll');
+        if (rowEl) {
+          const rr = rowEl.getBoundingClientRect();
+          if (pt.x < rr.left + 60) rowEl.scrollLeft -= 14;
+          else if (pt.x > rr.right - 60) rowEl.scrollLeft += 14;
+        }
+      }
+      rafId = requestAnimationFrame(auto);
+    };
+    rafId = requestAnimationFrame(auto);
+    const onMove = (ev) => {
+      ev.preventDefault();
+      this._dragPt = { x: ev.clientX, y: ev.clientY };
+      if (!this._dragMoved && Math.hypot(ev.clientX - startX, ev.clientY - startY) > 8) {
+        this._dragMoved = true;
+        mkGhost();
+      }
+      if (!this._dragMoved) return;
+      ghost.style.left = (ev.clientX - ghost.offsetWidth / 2) + 'px';
+      ghost.style.top = (ev.clientY - ghost.offsetHeight / 2) + 'px';
+      const under = this.shadowRoot.elementFromPoint(ev.clientX, ev.clientY);
+      if (!under) { this._setDropTarget(null); return; }
+      if (kind === 'stations') {
+        const tile = under.closest && under.closest('.station-tile:not(.empty)');
+        // hovering the tile's OWN original spot = "put it back" = no move
+        // (falling through to the category here made a drop-in-place
+        // append the station to the end of the playlist)
+        if (tile === el) { this._setDropTarget(null); return; }
+        if (tile) { this._setDropTarget(tile); return; }
+        const cat = under.closest && under.closest('.category');
+        this._setDropTarget(cat || null);
+      } else {
+        const cat = under.closest && under.closest('.category');
+        this._setDropTarget(cat && cat !== el ? cat : null);
+      }
+    };
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove, true);
+      window.removeEventListener('pointerup', onUp, true);
+      cancelAnimationFrame(rafId);
+      if (ghost) ghost.remove();
+      el.classList.remove('drag-src');
+      const tgt = this._dropTargetEl;
+      this._setDropTarget(null);
+      if (this._dragMoved && tgt) this._performMove(el, tgt, kind);
+      setTimeout(() => { this._dragMoved = false; }, 0);
+    };
+    window.addEventListener('pointermove', onMove, { capture: true, passive: false });
+    window.addEventListener('pointerup', onUp, { capture: true });
+  }
+
+  _performMove(el, tgt, kind) {
+    if (!this._editCats) return;
+    this._editSnapshot();
+    const cats = this._editCats;
+    if (kind === 'stations') {
+      const fromCat = +el.dataset.cat, fromAbs = +el.dataset.abs;
+      if (isNaN(fromCat) || isNaN(fromAbs) || !cats[fromCat]) return;
+      const [moved] = cats[fromCat].stations.splice(fromAbs, 1);
+      if (!moved) return;
+      if (tgt.classList.contains('station-tile')) {
+        const toCat = +tgt.dataset.cat;
+        let toAbs = +tgt.dataset.abs;
+        if (toCat === fromCat && fromAbs < toAbs) toAbs -= 1;
+        cats[toCat].stations.splice(toAbs, 0, moved);
+      } else {
+        const toCat = +tgt.dataset.cat;
+        if (!cats[toCat]) return;
+        cats[toCat].stations.push(moved);
+      }
+    } else {
+      const from = +el.dataset.cat, to = +tgt.dataset.cat;
+      if (isNaN(from) || isNaN(to) || from === to) return;
+      const [movedCat] = cats.splice(from, 1);
+      cats.splice(to > from ? to - 1 : to, 0, movedCat);
+    }
+    // edit session continues — save happens only on Exit Edit Mode
+    this._editRefresh();
+  }
+
+  // Persist playlists/stations back into THIS card's config inside the
+  // storage dashboard — self-service, works for any HA admin user.
+  // Patch arbitrary keys on every jukebox card across sync_dashboards
+  // (null value deletes the key). Same mechanism as _saveCategories.
+  async _saveCardConfig(patch, render = true) {
+    this._config = { ...this._config, ...patch };
+    for (const k of Object.keys(patch)) { if (patch[k] === null) delete this._config[k]; }
+    const here = location.pathname.split('/')[1] || null;
+    const targets = [...new Set([here, ...(this._config.sync_dashboards || [])])].filter(Boolean);
+    for (const urlPath of targets) {
+      try {
+        const cfg = await this._hass.callWS({ type: 'lovelace/config', url_path: urlPath });
+        let n = 0;
+        const walk = (o) => {
+          if (Array.isArray(o)) { o.forEach(walk); return; }
+          if (o && typeof o === 'object') {
+            if (o.type === 'custom:jukebox-card') {
+              for (const k of Object.keys(patch)) {
+                if (patch[k] === null) delete o[k]; else o[k] = patch[k];
+              }
+              n++;
+            }
+            Object.values(o).forEach(walk);
+          }
+        };
+        walk(cfg);
+        if (n) await this._hass.callWS({ type: 'lovelace/config/save', url_path: urlPath, config: cfg });
+      } catch (e) {
+        console.warn('jukebox-card: could not persist config to', urlPath, e);
+      }
+    }
+    if (render) { this._lastStructuralHash = null; this._render(); }
+  }
+
+  async _saveCategories(cats, render = true) {
+    this._config = { ...this._config, categories: cats };
+    // playlists are a MASTER shared by all zones/speakers; with
+    // `sync_dashboards: [url-path, ...]` in the card config the same
+    // master is written to the jukebox cards on those dashboards too
+    const here = location.pathname.split('/')[1] || null;
+    const targets = [...new Set([here, ...(this._config.sync_dashboards || [])])].filter(Boolean);
+    for (const urlPath of targets) {
+      try {
+        const cfg = await this._hass.callWS({ type: 'lovelace/config', url_path: urlPath });
+        let n = 0;
+        const walk = (o) => {
+          if (Array.isArray(o)) { o.forEach(walk); return; }
+          if (o && typeof o === 'object') {
+            if (o.type === 'custom:jukebox-card') { o.categories = cats; n++; }
+            Object.values(o).forEach(walk);
+          }
+        };
+        walk(cfg);
+        if (n) await this._hass.callWS({ type: 'lovelace/config/save', url_path: urlPath, config: cfg });
+      } catch (e) {
+        console.warn('jukebox-card: could not persist playlists to', urlPath, e);
+      }
+    }
+    if (render) { this._lastStructuralHash = null; this._render(); }
+  }
+
+  // ── Station directory (radio-browser.info) ──
+  async _dirApi(path) {
+    for (const host of ['de1', 'at1', 'nl1']) {
+      try {
+        const r = await fetch(`https://${host}.api.radio-browser.info${path}`);
+        if (r.ok) return await r.json();
+      } catch (e) { /* try next mirror */ }
+    }
+    throw new Error('radio-browser unreachable');
+  }
+
+  _isAdmin() {
+    return !!(this._hass && this._hass.user && this._hass.user.is_admin);
+  }
+
+  _canEdit() {
+    return this._isAdmin() || !!this._config.allow_non_admin_edit;
+  }
+
+  _openSettingsMenu(wrap, anchor) {
+    const old = this.shadowRoot.querySelector('.settings-menu');
+    if (old) { old.remove(); return; } // second tap on the gear closes it
+    const menu = document.createElement('div');
+    menu.className = 'settings-menu';
+    menu.addEventListener('click', e => e.stopPropagation());
+    const item = (icon, label, fn) => {
+      const row = document.createElement('div');
+      row.className = 'speaker-item settings-item';
+      row.innerHTML = `<ha-icon icon="${icon}" style="--mdc-icon-size:20px"></ha-icon><span class="settings-label">${label}</span>`;
+      row.addEventListener('click', e => { e.stopPropagation(); menu.remove(); fn(); });
+      menu.appendChild(row);
+    };
+    if (this._canEdit()) {
+      item('mdi:playlist-plus', 'Add stations…', () => this._openDir());
+      item('mdi:image', 'Background…', () => this._openBgEditor());
+    }
+    if (this._isAdmin()) {
+      item('mdi:account-lock', 'Permissions…', () => this._openPermissions());
+    }
+    if (!menu.children.length) {
+      const row = document.createElement('div');
+      row.className = 'settings-label';
+      row.style.padding = '10px';
+      row.style.opacity = '0.7';
+      row.textContent = 'Editing is limited to admins';
+      menu.appendChild(row);
+    }
+    wrap.appendChild(menu);
+    const closeDoc = (ev) => {
+      const path = ev.composedPath ? ev.composedPath() : [];
+      // ignore clicks on the menu AND on the gear itself (the gear handler
+      // does the toggle; the capture closer must not race it)
+      if (path.includes(menu) || path.includes(anchor)) return;
+      menu.remove();
+      document.removeEventListener('click', closeDoc, true);
+    };
+    setTimeout(() => document.addEventListener('click', closeDoc, true), 0);
+  }
+
+  _openPermissions() {
+    const overlay = document.createElement('div');
+    overlay.className = 'image-upload-overlay';
+    overlay.addEventListener('click', () => overlay.remove());
+    const modal = document.createElement('div');
+    modal.className = 'image-upload-modal';
+    modal.addEventListener('click', e => e.stopPropagation());
+    modal.innerHTML = `<div class="image-upload-title">Who can edit playlists &amp; settings?</div>`;
+    let allow = !!this._config.allow_non_admin_edit;
+    const fits = document.createElement('div');
+    fits.className = 'fit-row';
+    const mkOpt = (label, val) => {
+      const b = document.createElement('button');
+      b.className = 'fit-btn' + ((val === allow) ? ' active' : '');
+      b.textContent = label;
+      b.addEventListener('click', e => {
+        e.stopPropagation();
+        allow = val;
+        fits.querySelectorAll('.fit-btn').forEach(x => x.classList.toggle('active', x === b));
+      });
+      fits.appendChild(b);
+    };
+    mkOpt('Admins only', false);
+    mkOpt('Everyone', true);
+    modal.appendChild(fits);
+    const note = document.createElement('div');
+    note.className = 'dir-sub';
+    note.style.cssText = 'padding:4px 2px 12px;white-space:normal;';
+    note.textContent = 'Note: Home Assistant only lets ADMIN accounts write dashboards. With "Everyone", a non-admin user\u2019s edits will APPEAR to work but only last until their page reloads \u2014 they are never actually saved, and other devices never see them.';
+    modal.appendChild(note);
+    const btns = document.createElement('div');
+    btns.className = 'image-upload-buttons';
+    const mk = (label, cls, fn) => {
+      const b = document.createElement('button');
+      b.className = 'upload-btn' + (cls ? ' ' + cls : '');
+      b.textContent = label;
+      b.addEventListener('click', e => { e.stopPropagation(); fn(); });
+      btns.appendChild(b);
+    };
+    mk('Save', 'save', () => { overlay.remove(); this._saveCardConfig({ allow_non_admin_edit: allow || null }, false); });
+    mk('Cancel', '', () => overlay.remove());
+    modal.appendChild(btns);
+    overlay.appendChild(modal);
+    (this._containerEl || this.shadowRoot).appendChild(overlay);
+  }
+
+  _openBgEditor() {
+    const overlay = document.createElement('div');
+    overlay.className = 'image-upload-overlay';
+    const modal = document.createElement('div');
+    modal.className = 'image-upload-modal';
+    modal.addEventListener('click', e => e.stopPropagation());
+    const title = document.createElement('div');
+    title.className = 'image-upload-title';
+    title.textContent = 'Jukebox Background';
+    modal.appendChild(title);
+
+    let image = this._config.background_image || '';
+    let fit = this._config.background_fit || 'fill';
+
+    const preview = document.createElement('div');
+    preview.className = 'bg-preview';
+    const paint = () => {
+      const size = fit === 'fill' ? 'cover' : fit === 'fit' ? 'contain' : fit === 'stretch' ? '100% 100%' : 'auto';
+      preview.style.background = image
+        ? `linear-gradient(rgba(12,12,16,0.62), rgba(12,12,16,0.62)), url('${image}') center / ${size} no-repeat`
+        : 'rgba(127,127,127,0.15)';
+      preview.textContent = image ? '' : 'No background set';
+    };
+    paint();
+    modal.appendChild(preview);
+
+    const fileInput = document.createElement('input');
+    fileInput.type = 'file';
+    fileInput.accept = 'image/*';
+    fileInput.style.display = 'none';
+    fileInput.addEventListener('change', () => {
+      const f = fileInput.files && fileInput.files[0];
+      if (!f) return;
+      const reader = new FileReader();
+      reader.onload = () => { image = reader.result; paint(); };
+      reader.readAsDataURL(f);
+    });
+    modal.appendChild(fileInput);
+
+    const urlInp = document.createElement('input');
+    urlInp.className = 'dir-search';
+    urlInp.placeholder = 'or image URL (e.g. /local/mural.jpg)';
+    urlInp.value = image.startsWith('data:') ? '' : image;
+    urlInp.addEventListener('change', () => { if (urlInp.value.trim()) { image = urlInp.value.trim(); paint(); } });
+    modal.appendChild(urlInp);
+
+    const fits = document.createElement('div');
+    fits.className = 'fit-row';
+    ['fill', 'fit', 'stretch', 'center'].forEach(f => {
+      const btn = document.createElement('button');
+      btn.className = 'fit-btn' + (f === fit ? ' active' : '');
+      btn.textContent = f[0].toUpperCase() + f.slice(1);
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        fit = f;
+        fits.querySelectorAll('.fit-btn').forEach(x => x.classList.toggle('active', x === btn));
+        paint();
+      });
+      fits.appendChild(btn);
+    });
+    modal.appendChild(fits);
+
+    const btnRow = document.createElement('div');
+    btnRow.className = 'image-upload-buttons';
+    const mk = (label, cls, fn) => {
+      const btn = document.createElement('button');
+      btn.className = 'upload-btn' + (cls ? ' ' + cls : '');
+      btn.textContent = label;
+      btn.addEventListener('click', e => { e.stopPropagation(); fn(); });
+      btnRow.appendChild(btn);
+    };
+    mk('Choose Image', '', () => fileInput.click());
+    mk('Save', 'save', () => {
+      overlay.remove();
+      this._saveCardConfig({ background_image: image || null, background_fit: image ? fit : null }, true);
+    });
+    mk('Remove', 'remove', () => {
+      overlay.remove();
+      this._saveCardConfig({ background_image: null, background_fit: null }, true);
+    });
+    mk('Cancel', '', () => overlay.remove());
+    modal.appendChild(btnRow);
+
+    overlay.appendChild(modal);
+    overlay.addEventListener('click', () => overlay.remove());
+    (this._containerEl || this.shadowRoot).appendChild(overlay);
+  }
+
+  _openDir() {
+    this._dirStack = [];
+    this._dirCats = null;
+    this._renderDir({ mode: 'root', title: 'Add Stations' });
+    setTimeout(() => this._syncOverlayState(), 0);
+  }
+
+  _closeDir() {
+    const p = this.shadowRoot.querySelector('.dir-panel');
+    if (p) p.remove();
+    this._dirStack = null;
+    this._syncOverlayState();
+    if (this._dirCats) {
+      const cats = this._dirCats;
+      this._dirCats = null;
+      this._saveCategories(cats, true);
+    }
+  }
+
+  // tablet-helper hides its floating view-back button while a jukebox
+  // overlay is up (it sits exactly over our panel controls)
+  _syncOverlayState() {
+    const open = !!(this.shadowRoot.querySelector('.dir-panel') ||
+                    this.shadowRoot.querySelector('.pl-man') || this._jiggle);
+    try { window.dispatchEvent(new CustomEvent('jukebox-overlay', { detail: { open } })); } catch (e) {}
+  }
+
+  async _renderDir(view, push = true) {
+    if (!this._containerEl || !this._dirStack) return;
+    if (push) this._dirStack.push(view);
+    let panel = this.shadowRoot.querySelector('.dir-panel');
+    if (!panel) {
+      panel = document.createElement('div');
+      panel.className = 'dir-panel';
+      this._containerEl.appendChild(panel);
+    }
+    panel.innerHTML = '';
+    const head = document.createElement('div');
+    head.className = 'dir-head';
+    const back = document.createElement('button');
+    back.className = 'dir-iconbtn';
+    back.textContent = '‹';
+    // per Phil: back = leave the browser entirely (same as the ✕)
+    back.addEventListener('click', () => { this._closeDir(); this._lastStructuralHash = null; this._render(); });
+    const title = document.createElement('div');
+    title.className = 'dir-title';
+    title.textContent = view.title;
+    const close = document.createElement('button');
+    close.className = 'dir-iconbtn';
+    close.innerHTML = '&times;';
+    close.addEventListener('click', () => { this._closeDir(); this._lastStructuralHash = null; this._render(); });
+    head.appendChild(back); head.appendChild(title); head.appendChild(close);
+    panel.appendChild(head);
+    const hintBar = document.createElement('div');
+    hintBar.className = 'dir-hintbar';
+    hintBar.textContent = 'Tap to Play on Speakers Selected on Previous Screen · Hard Press to Add to Playlist';
+    panel.appendChild(hintBar);
+    const body = document.createElement('div');
+    body.className = 'dir-body';
+    panel.appendChild(body);
+
+    const navRow = (label, next) => {
+      const row = document.createElement('div');
+      row.className = 'dir-row';
+      row.innerHTML = `<div class="dir-name" style="flex:1">${label}</div><div style="opacity:.5">›</div>`;
+      row.addEventListener('click', () => this._renderDir(next));
+      body.appendChild(row);
+    };
+
+    if (view.mode === 'root') {
+      const inp = document.createElement('input');
+      inp.className = 'dir-search';
+      inp.placeholder = 'Search stations…';
+      inp.addEventListener('keydown', ev => {
+        const q = inp.value.trim();
+        if (ev.key === 'Enter' && q) {
+          this._renderDir({ mode: 'stations', title: 'Search: ' + q,
+            path: `/json/stations/search?name=${encodeURIComponent(q)}&hidebroken=true&order=clickcount&reverse=true&limit=100` });
+        }
+      });
+      body.appendChild(inp);
+      navRow('★ Popular stations', { mode: 'stations', title: 'Popular', path: '/json/stations/topclick/100?hidebroken=true' });
+      navRow('By genre', { mode: 'tags', title: 'Genres' });
+      navRow('By country', { mode: 'countries', title: 'Countries' });
+      return;
+    }
+
+    const loading = document.createElement('div');
+    loading.className = 'dir-sub';
+    loading.style.padding = '10px';
+    loading.textContent = 'Loading…';
+    body.appendChild(loading);
+    try {
+      if (view.mode === 'tags') {
+        const tags = await this._dirApi('/json/tags?order=stationcount&reverse=true&hidebroken=true&limit=200');
+        loading.remove();
+        for (const t of tags) {
+          if (!t.name) continue;
+          navRow(`${t.name}  (${t.stationcount})`, { mode: 'stations', title: t.name,
+            path: `/json/stations/bytagexact/${encodeURIComponent(t.name)}?hidebroken=true&order=clickcount&reverse=true&limit=100` });
+        }
+      } else if (view.mode === 'countries') {
+        const cs = await this._dirApi('/json/countries');
+        loading.remove();
+        for (const c of cs) {
+          if (!c.name) continue;
+          navRow(`${c.name}  (${c.stationcount})`, { mode: 'stations', title: c.name,
+            path: `/json/stations/bycountryexact/${encodeURIComponent(c.name)}?hidebroken=true&order=clickcount&reverse=true&limit=150` });
+        }
+      } else if (view.mode === 'stations') {
+        const list = await this._dirApi(view.path);
+        loading.remove();
+        if (!list.length) {
+          const none = document.createElement('div');
+          none.className = 'dir-sub'; none.style.padding = '10px';
+          none.textContent = 'No stations found.';
+          body.appendChild(none);
+        }
+        for (const st of list) this._dirStationRow(body, st);
+      }
+    } catch (e) {
+      loading.textContent = 'Station directory unreachable — check internet and try again.';
+    }
+  }
+
+  _dirStationRow(body, st) {
+    const row = document.createElement('div');
+    row.className = 'dir-row';
+    const img = document.createElement('img');
+    img.className = 'dir-fav';
+    if (st.favicon) { img.src = st.favicon; img.addEventListener('error', () => { img.style.visibility = 'hidden'; }); }
+    else { img.style.visibility = 'hidden'; }
+    row.appendChild(img);
+    const txt = document.createElement('div');
+    txt.style.flex = '1'; txt.style.minWidth = '0';
+    const nm = document.createElement('div'); nm.className = 'dir-name'; nm.textContent = st.name;
+    const sub = document.createElement('div'); sub.className = 'dir-sub';
+    sub.textContent = [st.codec, st.bitrate ? st.bitrate + 'kbps' : '', st.country].filter(Boolean).join(' · ');
+    txt.appendChild(nm); txt.appendChild(sub);
+    row.appendChild(txt);
+    row.dataset.url = st.url_resolved || st.url;
+    const ctl = document.createElement('div');
+    ctl.className = 'dir-ctl';
+    const stopB = document.createElement('button');
+    stopB.className = 'dir-stop';
+    stopB.innerHTML = '<ha-icon icon="mdi:stop" style="--mdc-icon-size:18px"></ha-icon>';
+    ['pointerdown', 'pointerup'].forEach(evn => stopB.addEventListener(evn, e => e.stopPropagation()));
+    stopB.addEventListener('click', e => {
+      e.stopPropagation();
+      this._dirStopAt = Date.now();
+      this._stopPlayback();
+      this._syncDirRows();
+    });
+    ctl.appendChild(stopB);
+    row.appendChild(ctl);
+    let timer = null, held = false;
+    row.addEventListener('contextmenu', e => e.preventDefault());
+    row.addEventListener('pointerdown', () => {
+      held = false;
+      timer = setTimeout(() => { timer = null; held = true; this._dirAddPopup(body, row, st); }, 500);
+    });
+    row.addEventListener('pointerup', () => {
+      if (timer) { clearTimeout(timer); timer = null; }
+      if (held) return;
+      // tap = preview on the active zone
+      this._dirStopAt = 0;
+      this._playStation({ name: st.name, url: st.url_resolved || st.url, ...(st.favicon ? { logo: st.favicon } : {}) }, 'Preview');
+      setTimeout(() => this._syncDirRows(), 50);
+    });
+    ['pointerleave', 'pointercancel'].forEach(evn => row.addEventListener(evn, () => { if (timer) { clearTimeout(timer); timer = null; } }));
+    body.appendChild(row);
+  }
+
+  _syncDirRows() {
+    const panel = this.shadowRoot.querySelector('.dir-panel');
+    if (!panel) return;
+    let url = null;
+    if (this._pendingStation) {
+      url = this._pendingStation.url;
+    } else if (!(this._dirStopAt && Date.now() - this._dirStopAt < 6000)) {
+      const z = this._activeZone();
+      // stopped zones keep their station as a preset — only show the
+      // orange playing controls while audio is actually live
+      if (z && z.station && this._zoneLive(z)) url = z.station.url;
+    }
+    panel.querySelectorAll('.dir-row[data-url]').forEach(r =>
+      r.classList.toggle('playing', !!url && r.dataset.url === url));
+  }
+
+  _dirAddPopup(body, row, st) {
+    const old = body.querySelector('.dir-pop');
+    if (old) old.remove();
+    body.style.position = 'relative';
+    const pop = document.createElement('div');
+    pop.className = 'dir-pop';
+    const closePop = () => {
+      pop.remove();
+      document.removeEventListener('click', closeOnDoc, true);
+    };
+    // capture-phase doc closer MUST ignore clicks inside the popup —
+    // capture runs before the buttons' own handlers, so without this
+    // guard tapping "New playlist" destroyed the popup first
+    const closeOnDoc = (ev) => {
+      if (ev.composedPath && ev.composedPath().includes(pop)) return;
+      closePop();
+    };
+    const mkBtn = (label, fn) => {
+      const btn = document.createElement('button');
+      btn.textContent = label;
+      btn.addEventListener('click', e => { e.stopPropagation(); fn(); });
+      pop.appendChild(btn);
+      return btn;
+    };
+    for (const c of this._getCategories()) {
+      mkBtn('Add to \u201c' + c.name + '\u201d', () => {
+        this._dirAdd(st, c.name, null);
+        closePop();
+        this._dirToast('\u201c' + st.name + '\u201d added to \u201c' + c.name + '\u201d');
+      });
+    }
+    mkBtn('\uFF0B New playlist\u2026', () => {
+      pop.innerHTML = '';
+      const hd = document.createElement('div');
+      hd.style.cssText = 'font-weight:600;font-size:14px;padding:2px 2px 6px;';
+      hd.textContent = 'Enter New Playlist Name';
+      pop.appendChild(hd);
+      const inp = document.createElement('input');
+      inp.className = 'dir-search';
+      inp.placeholder = 'Playlist name';
+      pop.appendChild(inp);
+      const create = () => {
+        const name = inp.value.trim();
+        if (!name) { inp.focus(); return; }
+        this._dirAdd(st, null, name);
+        closePop();
+        this._dirToast('\u201c' + st.name + '\u201d added to new playlist \u201c' + name + '\u201d');
+      };
+      inp.addEventListener('keydown', ev => { if (ev.key === 'Enter') create(); });
+      const ok = document.createElement('button');
+      ok.textContent = 'Create & Add';
+      ok.addEventListener('click', e => { e.stopPropagation(); create(); });
+      pop.appendChild(ok);
+      const cancel = document.createElement('button');
+      cancel.textContent = 'Cancel';
+      cancel.addEventListener('click', e => { e.stopPropagation(); closePop(); });
+      pop.appendChild(cancel);
+      setTimeout(() => inp.focus(), 50);
+    });
+    pop.style.left = '24px';
+    pop.style.right = '24px';
+    pop.style.top = (row.offsetTop + row.offsetHeight + 4) + 'px';
+    body.appendChild(pop);
+    setTimeout(() => document.addEventListener('click', closeOnDoc, true), 0);
+  }
+
+  // transient confirmation while STAYING on the browse screen — people
+  // keep previewing and adding
+  _dirToast(msg) {
+    const panel = this.shadowRoot.querySelector('.dir-panel');
+    if (!panel) return;
+    const oldT = panel.querySelector('.dir-toast');
+    if (oldT) oldT.remove();
+    const t = document.createElement('div');
+    t.className = 'dir-toast';
+    t.textContent = msg;
+    panel.appendChild(t);
+    setTimeout(() => t.remove(), 2200);
+  }
+
+  _dirAdd(st, catName, newName) {
+    // deferred: mutate a working copy only — ANY dashboard save makes HA
+    // rebuild this card, which would destroy the browse panel and the
+    // user's search context. The copy is saved when the panel closes.
+    if (!this._dirCats) {
+      this._dirCats = this._getCategories().map(c => ({ ...c, stations: [...c.stations] }));
+    }
+    const cats = this._dirCats;
+    const stn = { name: st.name, url: st.url_resolved || st.url, ...(st.favicon ? { logo: st.favicon } : {}) };
+    if (newName) {
+      cats.push({ name: newName, stations: [stn] });
+    } else {
+      const c = cats.find(c => c.name === catName);
+      if (!c) return;
+      c.stations.push(stn);
+    }
+  }
+
+  // ── Playlist manager (hard-press any playlist title) ──
+  // Left drawer listing playlists: ≡ drag-handle (vertical drag), order
+  // number input (set 7→2: it takes slot 2, old 2 becomes 3), ✕ delete
+  // with confirm. All changes hit a working copy; saved on Done/close.
+  _openPlaylistManager() {
+    if (!this._canEdit()) return;
+    if (this.shadowRoot.querySelector('.pl-man')) return;
+    this._plCats = this._getCategories().map(c => ({ ...c, stations: [...c.stations] }));
+    const panel = document.createElement('div');
+    panel.className = 'pl-man';
+    panel.addEventListener('click', e => e.stopPropagation());
+    const head = document.createElement('div');
+    head.className = 'pl-man-head';
+    const ttl = document.createElement('div');
+    ttl.className = 'dir-title';
+    ttl.textContent = 'Playlists';
+    const done = document.createElement('button');
+    done.className = 'edit-exit';
+    done.style.cssText = 'padding:9px 18px;border-radius:9px;border:none;font-weight:600;cursor:pointer;';
+    done.textContent = 'Done';
+    done.addEventListener('click', e => { e.stopPropagation(); this._closePlaylistManager(true); });
+    head.appendChild(ttl); head.appendChild(done);
+    panel.appendChild(head);
+    const list = document.createElement('div');
+    list.className = 'pl-man-list';
+    panel.appendChild(list);
+    (this._containerEl || this.shadowRoot).appendChild(panel);
+    this._plRebuild(list);
+    this._syncOverlayState();
+  }
+
+  _closePlaylistManager(save) {
+    const p = this.shadowRoot.querySelector('.pl-man');
+    if (p) p.remove();
+    const cats = this._plCats;
+    this._plCats = null;
+    this._syncOverlayState();
+    if (save && cats) this._saveCategories(cats, true);
+  }
+
+  _plRebuild(list) {
+    list.innerHTML = '';
+    this._plCats.forEach((c, idx) => {
+      const row = document.createElement('div');
+      row.className = 'pl-row';
+      row.dataset.idx = String(idx);
+
+      const grip = document.createElement('div');
+      grip.className = 'pl-grip';
+      grip.innerHTML = '&#9776;';
+      grip.addEventListener('pointerdown', e => this._plDrag(e, list, row));
+      row.appendChild(grip);
+
+      const nm = document.createElement('div');
+      nm.className = 'pl-name';
+      nm.textContent = c.name;
+      row.appendChild(nm);
+
+      const num = document.createElement('input');
+      num.className = 'pl-num';
+      num.type = 'number';
+      num.min = '1';
+      num.max = String(this._plCats.length);
+      num.value = String(idx + 1);
+      num.addEventListener('click', e => e.stopPropagation());
+      const applyNum = () => {
+        let pos = parseInt(num.value, 10);
+        if (isNaN(pos)) { num.value = String(idx + 1); return; }
+        pos = Math.max(1, Math.min(this._plCats.length, pos)) - 1;
+        if (pos === idx) { num.value = String(idx + 1); return; }
+        const [moved] = this._plCats.splice(idx, 1);
+        this._plCats.splice(pos, 0, moved);
+        this._plRebuild(list);
+      };
+      num.addEventListener('change', applyNum);
+      num.addEventListener('keydown', ev => { if (ev.key === 'Enter') { ev.preventDefault(); applyNum(); } });
+      row.appendChild(num);
+
+      const del = document.createElement('button');
+      del.className = 'pl-del';
+      del.innerHTML = '&times;';
+      del.addEventListener('click', e => {
+        e.stopPropagation();
+        const conf = document.createElement('div');
+        conf.className = 'pl-confirm';
+        conf.innerHTML = `<div style="flex:1">Delete \u201c${c.name}\u201d and its ${c.stations.length} station${c.stations.length === 1 ? '' : 's'}?</div>`;
+        const yes = document.createElement('button');
+        yes.className = 'zone-del-btn';
+        yes.textContent = 'Delete';
+        yes.addEventListener('click', ev2 => {
+          ev2.stopPropagation();
+          this._plCats.splice(idx, 1);
+          this._plRebuild(list);
+        });
+        const no = document.createElement('button');
+        no.className = 'zone-del-cancel';
+        no.textContent = 'Cancel';
+        no.addEventListener('click', ev2 => { ev2.stopPropagation(); this._plRebuild(list); });
+        conf.appendChild(yes); conf.appendChild(no);
+        row.innerHTML = '';
+        row.appendChild(conf);
+      });
+      row.appendChild(del);
+      list.appendChild(row);
+    });
+  }
+
+  _plDrag(e, list, row) {
+    e.preventDefault();
+    e.stopPropagation();
+    const fromIdx = +row.dataset.idx;
+    row.classList.add('pl-dragging');
+    const onMove = (ev) => {
+      ev.preventDefault();
+      const under = this.shadowRoot.elementFromPoint(ev.clientX, ev.clientY);
+      const over = under && under.closest && under.closest('.pl-row');
+      if (over && over !== row) {
+        const rows = [...list.children];
+        const a = rows.indexOf(row), b = rows.indexOf(over);
+        if (a < b) list.insertBefore(row, over.nextSibling);
+        else list.insertBefore(row, over);
+      }
+    };
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove, true);
+      window.removeEventListener('pointerup', onUp, true);
+      row.classList.remove('pl-dragging');
+      const newIdx = [...list.children].indexOf(row);
+      if (newIdx !== fromIdx && newIdx >= 0) {
+        const [moved] = this._plCats.splice(fromIdx, 1);
+        this._plCats.splice(newIdx, 0, moved);
+      }
+      this._plRebuild(list);
+    };
+    window.addEventListener('pointermove', onMove, { capture: true, passive: false });
+    window.addEventListener('pointerup', onUp, { capture: true });
+  }
+
+  _showZoneDeletePopup(bar, chip, z) {
+    this._closeZonePopup();
+    this._closeSpeakerMenu();
+    this._zonePopOpen = true;
+    const pop = document.createElement('div');
+    pop.className = 'zone-del-pop';
+    const label = document.createElement('span');
+    label.textContent = 'Remove zone?';
+    pop.appendChild(label);
+    const del = document.createElement('button');
+    del.className = 'zone-del-btn';
+    del.textContent = 'Remove';
+    del.addEventListener('click', e => {
+      e.stopPropagation();
+      // removing a zone ALWAYS silences it — stop the group entity and
+      // every member, except speakers that now belong to another zone
+      const stopSet = new Set(this._zoneTargets(z).concat(z.s));
+      for (const t of stopSet) {
+        const owner = this._zoneOwner(t);
+        if (owner && owner.id !== z.id) continue;
+        this._hass.callService('media_player', 'media_stop', { entity_id: t });
+        this._castSpeakers.delete(t);
+      }
+      this._closeZonePopup();
+      this._removeZone(z);
+      this._pendingStation = null;
+      this._lastStateHash = null;
+      this._updateDynamic();
+    });
+    pop.appendChild(del);
+    const cancel = document.createElement('button');
+    cancel.className = 'zone-del-cancel';
+    cancel.innerHTML = '&times;';
+    cancel.addEventListener('click', e => { e.stopPropagation(); this._closeZonePopup(); this._updateDynamic(); });
+    pop.appendChild(cancel);
+    // anchor right under the pressed chip
+    pop.style.left = Math.max(0, chip.offsetLeft) + 'px';
+    pop.style.top = (chip.offsetTop + chip.offsetHeight + 6) + 'px';
+    bar.appendChild(pop);
+    if (!this._zonePopDocClose) {
+      this._zonePopDocClose = () => { if (this._zonePopOpen) { this._closeZonePopup(); this._updateDynamic(); } };
+      document.addEventListener('click', this._zonePopDocClose);
+    }
+  }
+
+  _closeZonePopup() {
+    this._zonePopOpen = false;
+    const pop = this.shadowRoot.querySelector('.zone-del-pop');
+    if (pop) pop.remove();
+  }
+
+  _closeSpeakerMenu() {
+    if (!this._speakerMenuOpen) return;
+    this._speakerMenuOpen = false;
+    const m = this.shadowRoot.querySelector('.speaker-menu');
+    if (m) m.classList.remove('open');
+  }
+
+  _syncZoneChips(root) {
+    const bar = root.querySelector('.zone-chips');
+    if (!bar) return;
+    const zones = this._zoneList();
+    const act = this._activeZone();
+    if (this._zonePopOpen) return; // don't wipe the delete popup mid-confirm
+    bar.innerHTML = '';
+    for (const z of zones) {
+      const chip = document.createElement('div');
+      const live = this._zoneLive(z);
+      chip.className = 'zone-chip' + (z.id === act.id ? ' active' : '') + (z.station && !live ? ' stopped' : '');
+      chip.textContent = this._zoneName(z) + (z.station ? ' · ' + z.station.name : '');
+      // long-press -> delete popup anchored at the chip
+      let lpTimer = null, lpFired = false;
+      chip.addEventListener('contextmenu', e => e.preventDefault());
+      chip.addEventListener('pointerdown', () => {
+        lpFired = false;
+        lpTimer = setTimeout(() => { lpFired = true; this._showZoneDeletePopup(bar, chip, z); }, 550);
+      });
+      ['pointerup', 'pointerleave', 'pointercancel'].forEach(evn =>
+        chip.addEventListener(evn, () => clearTimeout(lpTimer)));
+      chip.addEventListener('click', e => {
+        e.stopPropagation();
+        if (lpFired) return;
+        this._closeSpeakerMenu();
+        if (z.id === this._activeZone().id) return;
+        this._switchZone(z.id);
+        this._pendingStation = null;
+        this._selectedSpeaker = this._playTargets()[0] || null;
+        this._lastStateHash = null;
+        this._updateDynamic();
+      });
+      bar.appendChild(chip);
+    }
+    const plus = document.createElement('div');
+    plus.className = 'zone-chip plus';
+    plus.textContent = '+ cast different music to other speakers';
+    plus.addEventListener('click', e => {
+      e.stopPropagation();
+      this._closeSpeakerMenu();
+      const d = this._newDraftZone();
+      this._switchZone(d.id);
+      this._pendingStation = null;
+      this._selectedSpeaker = null;
+      this._lastStateHash = null;
+      this._updateDynamic();
+    });
+    bar.appendChild(plus);
+  }
+
+  // (and therefore all scroll positions) intact.
+  _updateDynamic() {
+    const root = this.shadowRoot;
+    if (!this._config || !this._hass) return;
+    if (!root.querySelector('ha-card')) { this._render(); return; }
+
+    this._selectedSpeaker = this._resolveSelectedSpeaker();
+    const activeUrl = this._getActiveStationUrl();
+    this._otherZoneUrls = new Set(this._zoneList()
+      .filter(z => z.id !== this._activeZone().id && z.station)
+      .map(z => z.station.url));
+    const speakerState = this._hass.states[this._selectedSpeaker];
+    const isPlaying = speakerState && speakerState.state === 'playing';
+    const volume = speakerState ? (speakerState.attributes.volume_level || 0) : 0;
+
+    // Speaker dropdown label + checkboxes + zone chips
+    this._syncSpeakerMenu(root);
+    this._syncZoneChips(root);
+    this._syncDirRows();
+
+    // Main volume slider/icon/percent
+    if (!this._draggingVolume) {
+      const volWrap = root.querySelector('.volume-wrap');
+      if (volWrap) {
+        const slider = volWrap.querySelector('.volume-slider');
+        if (slider) slider.value = volume;
+        const pct = volWrap.querySelector('.vol-pct');
+        if (pct) pct.textContent = `${Math.round(volume * 100)}%`;
+        const icon = volWrap.querySelector('.vol-icon');
+        if (icon) icon.setAttribute('icon',
+          volume === 0 ? 'mdi:volume-off' :
+          volume < 0.5 ? 'mdi:volume-medium' : 'mdi:volume-high'
+        );
+      }
+
+      // Per-device volume sliders
+      root.querySelectorAll('.device-vol-row').forEach(row => {
+        const st = this._hass.states[row.dataset.entity];
+        if (!st) return;
+        const devVol = st.attributes.volume_level || 0;
+        const devSlider = row.querySelector('.device-vol-slider');
+        if (devSlider) devSlider.value = devVol;
+        const devPct = row.querySelector('.vol-pct');
+        if (devPct) devPct.textContent = `${Math.round(devVol * 100)}%`;
+      });
+    }
+
+    // Now-playing banner
+    let activeStationName = null;
+    if (activeUrl) {
+      for (const cat of this._getCategories()) {
+        const match = cat.stations.find(s => s.url === activeUrl);
+        if (match) { activeStationName = match.name; break; }
+      }
+    }
+    if (!activeStationName && isPlaying && speakerState.attributes.media_title) {
+      activeStationName = speakerState.attributes.media_title;
+    }
+    const banner = root.querySelector('.now-playing');
+    if (banner) {
+      const bs = this._bannerState(activeUrl, activeStationName, isPlaying);
+      this._fillBanner(banner, bs.name, bs.playing);
+    }
+
+    // Stop-cast button
+    const stopCast = root.querySelector('.stop-cast-btn');
+    if (stopCast) this._updateStopCastBtn(stopCast);
+
+    // Active tile highlight
+    root.querySelectorAll('.station-tile[data-url]').forEach(t => {
+      t.classList.toggle('active', !!activeUrl && t.dataset.url === activeUrl);
+      t.classList.toggle('other-zone', this._otherZoneUrls.has(t.dataset.url) && t.dataset.url !== activeUrl);
     });
   }
 
@@ -2216,6 +4093,25 @@ class JukeboxCard extends HTMLElement {
         display: flex;
         flex-direction: column;
         gap: 16px;
+        height: 100%;
+        min-height: 0;
+      }
+      .jukebox > * { flex: 0 0 auto; }
+      .stations-area {
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        overscroll-behavior: contain;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: thin;
+      }
+      .stations-area::-webkit-scrollbar { width: 6px; }
+      .stations-area::-webkit-scrollbar-thumb {
+        background: var(--divider-color, #ccc);
+        border-radius: 3px;
       }
 
       /* ── Controls ── */
@@ -2234,8 +4130,15 @@ class JukeboxCard extends HTMLElement {
         --mdc-icon-size: 20px;
         flex-shrink: 0;
       }
-      .speaker-select {
+      .speaker-wrap {
+        position: relative;
+      }
+      .speaker-btn {
         flex: 1;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
         padding: 8px 12px;
         border-radius: 8px;
         border: 1px solid var(--divider-color, #e0e0e0);
@@ -2244,10 +4147,524 @@ class JukeboxCard extends HTMLElement {
         font-size: 14px;
         font-family: inherit;
         cursor: pointer;
+        text-align: left;
       }
-      .speaker-select option {
+      .speaker-btn-label {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .speaker-caret { opacity: 0.7; flex-shrink: 0; }
+      .speaker-menu {
+        display: none;
+        position: absolute;
+        top: calc(100% + 4px);
+        left: 28px;
+        right: 0;
+        z-index: 30;
         background: var(--card-background-color, #fff);
+        border: 1px solid var(--divider-color, #e0e0e0);
+        border-radius: 10px;
+        box-shadow: 0 6px 18px rgba(0,0,0,0.45);
+        max-height: 280px;
+        overflow-y: auto;
+        padding: 6px;
+      }
+      .speaker-menu.open { display: block; }
+      .speaker-menu-header {
+        font-size: 11px;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+        opacity: 0.6;
+        padding: 6px 8px 2px;
+      }
+      .speaker-item {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 9px 8px;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 14px;
+      }
+      .speaker-item .spk-name { flex: 0 0 30%; }
+      .spk-vol-wrap {
+        display: none;
+        flex: 1;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
+      }
+      .speaker-item.checked .spk-vol-wrap { display: flex; }
+      .spk-vol { flex: 1; }
+      .zone-chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+        position: relative;
+      }
+      .zone-chips:empty { display: none; }
+      .zone-chip {
+        padding: 6px 14px;
+        border-radius: 16px;
+        border: 1px solid var(--divider-color, #555);
+        background: rgba(127,127,127,0.12);
         color: var(--primary-text-color);
+        font-size: 13px;
+        cursor: pointer;
+        white-space: nowrap;
+        max-width: 46%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .zone-chip.active {
+        border-color: var(--primary-color, #03a9f4);
+        background: rgba(3,169,244,0.18);
+        font-weight: 600;
+      }
+      .dir-btn {
+        width: 44px;
+        height: 38px;
+        border-radius: 8px;
+        border: 1px solid var(--divider-color, #555);
+        background: var(--card-background-color, #222);
+        color: var(--primary-text-color);
+        cursor: pointer;
+        flex-shrink: 0;
+        --mdc-icon-size: 20px;
+      }
+      .dir-panel {
+        position: absolute;
+        inset: 0;
+        z-index: 60;
+        background: var(--card-background-color, #111);
+        display: flex;
+        flex-direction: column;
+        border-radius: inherit;
+      }
+      .dir-head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--divider-color, #444);
+        flex-shrink: 0;
+      }
+      .dir-title { flex: 1; font-weight: 600; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .dir-iconbtn {
+        background: none;
+        border: none;
+        color: var(--primary-text-color);
+        font-size: 22px;
+        line-height: 1;
+        cursor: pointer;
+        padding: 4px 10px;
+      }
+      .dir-hintbar {
+        padding: 8px 14px;
+        font-size: 12px;
+        line-height: 1.4;
+        color: var(--secondary-text-color, #aaa);
+        background: rgba(3,169,244,0.08);
+        border-bottom: 1px solid var(--divider-color, #444);
+        flex-shrink: 0;
+        white-space: normal;
+      }
+      .dir-body { flex: 1; overflow-y: auto; padding: 10px 12px; }
+      .dir-ctl { display: none; align-items: center; gap: 8px; flex-shrink: 0; }
+      .dir-row.playing .dir-ctl { display: flex; }
+      .dir-row.playing { background: rgba(255,152,0,0.10); }
+      .dir-stop {
+        width: 36px;
+        height: 36px;
+        border-radius: 50%;
+        border: 1px solid var(--divider-color, #555);
+        background: none;
+        color: var(--primary-text-color);
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .dir-stop:hover { border-color: #FF9800; color: #FF9800; }
+      .dir-row {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 10px 8px;
+        border-radius: 8px;
+        cursor: pointer;
+        user-select: none;
+        -webkit-user-select: none;
+        -webkit-touch-callout: none;
+      }
+      .dir-row:hover { background: rgba(127,127,127,0.15); }
+      .dir-fav { width: 40px; height: 40px; border-radius: 8px; object-fit: cover; background: rgba(127,127,127,0.15); flex-shrink: 0; }
+      .dir-name { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .dir-sub { font-size: 11px; opacity: 0.65; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .dir-search {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 10px 12px;
+        border-radius: 8px;
+        border: 1px solid var(--divider-color, #555);
+        background: none;
+        color: var(--primary-text-color);
+        font-size: 14px;
+        margin-bottom: 8px;
+      }
+      .dir-pop {
+        position: absolute;
+        z-index: 70;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        padding: 10px;
+        border-radius: 10px;
+        background: var(--card-background-color, #222);
+        border: 1px solid var(--divider-color, #555);
+        box-shadow: 0 6px 18px rgba(0,0,0,0.5);
+        max-height: 320px;
+        overflow-y: auto;
+      }
+      .dir-pop button {
+        text-align: left;
+        padding: 9px 10px;
+        border-radius: 8px;
+        border: 1px solid var(--divider-color, #555);
+        background: none;
+        color: var(--primary-text-color);
+        font-size: 13px;
+        cursor: pointer;
+      }
+      .dir-pop button:hover { background: rgba(127,127,127,0.15); }
+      .dir-toast {
+        position: absolute;
+        bottom: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        max-width: 85%;
+        background: rgba(18,18,22,0.95);
+        border: 1px solid var(--divider-color, #555);
+        color: var(--primary-text-color);
+        padding: 11px 20px;
+        border-radius: 22px;
+        font-size: 13px;
+        z-index: 90;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        animation: dir-toast 2.2s forwards;
+      }
+      @keyframes dir-toast {
+        0% { opacity: 0; transform: translateX(-50%) translateY(8px); }
+        12% { opacity: 1; transform: translateX(-50%) translateY(0); }
+        82% { opacity: 1; }
+        100% { opacity: 0; }
+      }
+      @keyframes jiggle {
+        0% { transform: rotate(-1.2deg); }
+        50% { transform: rotate(1.2deg); }
+        100% { transform: rotate(-1.2deg); }
+      }
+      .jiggle-stations .station-tile:not(.empty) { animation: jiggle 0.28s infinite ease-in-out; }
+      /* without touch-action:none the browser treats the drag as a scroll
+         gesture and CANCELS the pointer — this is the core drag fix */
+      .jiggle-stations .station-tile, .jiggle-playlists .cat-header { touch-action: none; }
+      .jiggle-stations .station-scroll { scroll-snap-type: none; }
+      .drag-src { opacity: 0.35; }
+      .tile-x {
+        display: none;
+        position: absolute;
+        top: 4px;
+        left: 4px;
+        width: 26px;
+        height: 26px;
+        border-radius: 50%;
+        background: rgba(40,40,44,0.92);
+        color: #fff;
+        border: 2px solid rgba(255,255,255,0.85);
+        align-items: center;
+        justify-content: center;
+        font-size: 17px;
+        line-height: 1;
+        z-index: 5;
+        cursor: pointer;
+      }
+      .jiggle-stations .station-tile:not(.empty) .tile-x { display: flex; animation: none; }
+      .edit-bar {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        z-index: 80;
+        display: flex;
+        gap: 10px;
+        padding: 10px 12px;
+        background: rgba(15,15,18,0.94);
+        border-bottom: 1px solid var(--divider-color, #555);
+        box-sizing: border-box;
+      }
+      .edit-bar button {
+        flex: 1;
+        padding: 13px;
+        font-size: 15px;
+        font-weight: 600;
+        border-radius: 10px;
+        cursor: pointer;
+      }
+      .edit-exit {
+        background: var(--primary-color, #03a9f4);
+        color: #fff;
+        border: none;
+      }
+      .edit-undo {
+        background: none;
+        color: var(--primary-text-color);
+        border: 1px solid var(--divider-color, #666);
+      }
+      .edit-undo:disabled { opacity: 0.35; }
+      .pl-man {
+        position: absolute;
+        top: 0;
+        left: 0;
+        bottom: 0;
+        width: min(360px, 88%);
+        z-index: 85;
+        background: var(--card-background-color, #16161a);
+        border-right: 1px solid var(--divider-color, #555);
+        box-shadow: 8px 0 24px rgba(0,0,0,0.5);
+        display: flex;
+        flex-direction: column;
+      }
+      .pl-man-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        padding: 12px;
+        border-bottom: 1px solid var(--divider-color, #555);
+      }
+      .pl-man-list { flex: 1; overflow-y: auto; padding: 8px; }
+      .pl-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 8px;
+        border-radius: 8px;
+        border: 1px solid transparent;
+      }
+      .pl-row.pl-dragging {
+        background: rgba(3,169,244,0.15);
+        border-color: var(--primary-color, #03a9f4);
+      }
+      .pl-grip {
+        font-size: 18px;
+        opacity: 0.7;
+        padding: 4px 8px;
+        cursor: grab;
+        touch-action: none;
+        flex-shrink: 0;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+      .pl-name { flex: 1; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .pl-num {
+        width: 52px;
+        padding: 7px 6px;
+        text-align: center;
+        border-radius: 8px;
+        border: 1px solid var(--divider-color, #555);
+        background: none;
+        color: var(--primary-text-color);
+        font-size: 14px;
+        flex-shrink: 0;
+      }
+      .pl-del {
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        border: 1px solid var(--divider-color, #555);
+        background: none;
+        color: var(--primary-text-color);
+        font-size: 17px;
+        cursor: pointer;
+        flex-shrink: 0;
+      }
+      .pl-del:hover { background: rgba(198,40,40,0.3); border-color: #c62828; }
+      .settings-menu {
+        position: absolute;
+        top: calc(100% + 4px);
+        right: 0;
+        z-index: 35;
+        min-width: 290px;
+        background: var(--card-background-color, #222);
+        border: 1px solid var(--divider-color, #555);
+        border-radius: 10px;
+        box-shadow: 0 6px 18px rgba(0,0,0,0.5);
+        padding: 6px;
+      }
+      .bg-preview {
+        width: 100%;
+        aspect-ratio: 16/9;
+        border-radius: 10px;
+        border: 1px solid var(--divider-color, #555);
+        margin: 10px 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--secondary-text-color, #999);
+        font-size: 13px;
+        overflow: hidden;
+      }
+      .fit-row { display: flex; gap: 8px; margin-bottom: 12px; }
+      .fit-btn {
+        flex: 1;
+        padding: 9px 0;
+        border-radius: 8px;
+        border: 1px solid var(--divider-color, #555);
+        background: none;
+        color: var(--primary-text-color);
+        font-size: 13px;
+        cursor: pointer;
+      }
+      .fit-btn.active {
+        background: var(--primary-color, #03a9f4);
+        border-color: var(--primary-color, #03a9f4);
+        color: #fff;
+      }
+      .settings-label {
+        font-size: 14px;
+        white-space: nowrap;
+        overflow: visible;
+        flex: 1;
+      }
+      .pl-confirm {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        width: 100%;
+        font-size: 13px;
+      }
+      .jiggle-playlists .category { animation: jiggle 0.36s infinite ease-in-out; }
+      .jiggle-stations .station-tile.dragging,
+      .jiggle-playlists .category.dragging {
+        animation: none;
+        z-index: 100;
+        position: relative;
+        opacity: 0.92;
+      }
+      .drop-target { outline: 2px dashed var(--primary-color, #03a9f4); outline-offset: 2px; border-radius: 10px; }
+      .station-tile { scroll-snap-align: start; }
+      .station-tile, .cat-header {
+        user-select: none;
+        -webkit-user-select: none;
+        -webkit-touch-callout: none;
+      }
+      .zone-chip {
+        user-select: none;
+        -webkit-user-select: none;
+        -webkit-touch-callout: none;
+      }
+      .zone-chip.stopped {
+        opacity: 0.55;
+        border-style: dashed;
+      }
+      .zone-del-pop {
+        position: absolute;
+        z-index: 40;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 12px;
+        border-radius: 10px;
+        background: var(--card-background-color, #222);
+        border: 1px solid var(--divider-color, #555);
+        box-shadow: 0 6px 18px rgba(0,0,0,0.5);
+        font-size: 13px;
+        white-space: nowrap;
+      }
+      .zone-del-btn {
+        padding: 5px 12px;
+        border-radius: 8px;
+        border: none;
+        background: #c62828;
+        color: #fff;
+        font-size: 13px;
+        cursor: pointer;
+      }
+      .zone-del-cancel {
+        padding: 2px 8px;
+        border-radius: 8px;
+        border: 1px solid var(--divider-color, #555);
+        background: none;
+        color: var(--primary-text-color);
+        font-size: 15px;
+        cursor: pointer;
+      }
+      .zone-chip.plus {
+        padding: 6px 12px;
+        font-weight: 700;
+        opacity: 0.8;
+      }
+      .speaker-item.disabled {
+        opacity: 0.45;
+        cursor: default;
+      }
+      .spk-busy {
+        margin-left: auto;
+        font-size: 11px;
+        opacity: 0.75;
+        white-space: nowrap;
+        flex-shrink: 0;
+      }
+      .speaker-btn.nag {
+        border-color: var(--primary-color, #03a9f4);
+        box-shadow: 0 0 0 2px rgba(3,169,244,0.5);
+        transition: box-shadow 0.2s;
+      }
+      .station-tile.other-zone::after {
+        content: "";
+        position: absolute;
+        top: 6px;
+        right: 6px;
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        background: var(--primary-color, #03a9f4);
+        opacity: 0.55;
+      }
+      .spk-vol-pct { font-size: 12px; opacity: 0.8; width: 34px; text-align: right; flex-shrink: 0; }
+      .speaker-item:hover { background: rgba(127,127,127,0.15); }
+      .spk-check {
+        width: 18px;
+        height: 18px;
+        flex-shrink: 0;
+        border: 2px solid var(--secondary-text-color, #888);
+        border-radius: 4px;
+        position: relative;
+        box-sizing: border-box;
+      }
+      .spk-check.checked {
+        background: var(--primary-color, #03a9f4);
+        border-color: var(--primary-color, #03a9f4);
+      }
+      .spk-check.checked::after {
+        content: "";
+        position: absolute;
+        left: 4px;
+        top: 0px;
+        width: 5px;
+        height: 9px;
+        border: solid #fff;
+        border-width: 0 2px 2px 0;
+        transform: rotate(45deg);
+      }
+      .spk-name {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
       .volume-slider {
         flex: 1;
@@ -2350,10 +4767,18 @@ class JukeboxCard extends HTMLElement {
         gap: 8px;
         padding: 10px 14px;
         border-radius: 8px;
-        background: linear-gradient(135deg, #ff9800, #f57c00);
-        color: #fff;
         font-weight: 500;
         font-size: 14px;
+        min-height: 20px;
+      }
+      .now-playing.active {
+        background: linear-gradient(135deg, #ff9800, #f57c00);
+        color: #fff;
+      }
+      .now-playing.idle {
+        background: var(--secondary-background-color, #f5f5f5);
+        color: var(--secondary-text-color);
+        opacity: 0.6;
       }
       .now-playing ha-icon { --mdc-icon-size: 20px; flex-shrink: 0; }
       .now-playing span {
@@ -2369,6 +4794,26 @@ class JukeboxCard extends HTMLElement {
         flex-shrink: 0;
       }
       .stop-btn:hover { opacity: 1; }
+
+      /* ── Stop Cast Button ── */
+      .stop-cast-btn {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 8px 16px;
+        border-radius: 20px;
+        border: 2px solid #ff9800;
+        background: rgba(255, 152, 0, 0.08);
+        color: #ff9800;
+        font-size: 13px;
+        font-weight: 500;
+        cursor: pointer;
+        font-family: inherit;
+        transition: background 0.15s;
+        align-self: center;
+      }
+      .stop-cast-btn:hover { background: rgba(255, 152, 0, 0.2); }
+      .stop-cast-btn ha-icon { --mdc-icon-size: 18px; }
 
       /* ── Category ── */
       .category {
@@ -2399,7 +4844,6 @@ class JukeboxCard extends HTMLElement {
         grid-template-columns: repeat(var(--columns), 1fr);
         gap: 8px;
         min-width: 100%;
-        scroll-snap-align: start;
         flex-shrink: 0;
         box-sizing: border-box;
         padding: 3px;
@@ -2475,6 +4919,73 @@ class JukeboxCard extends HTMLElement {
       .dot.active {
         background: #ff9800;
       }
+
+      /* ── Image Upload Modal ── */
+      .image-upload-overlay {
+        position: fixed;
+        top: 0; left: 0; right: 0; bottom: 0;
+        background: rgba(0,0,0,0.7);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 9999;
+      }
+      .image-upload-modal {
+        background: var(--card-background-color, #fff);
+        border-radius: 16px;
+        padding: 20px;
+        max-width: 320px;
+        width: 90%;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .image-upload-title {
+        font-size: 16px;
+        font-weight: 600;
+        text-align: center;
+        color: var(--primary-text-color);
+      }
+      .image-upload-preview {
+        width: 100%;
+        aspect-ratio: 1;
+        border-radius: 10px;
+        cursor: pointer;
+        touch-action: none;
+      }
+      .image-upload-buttons {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        justify-content: center;
+      }
+      .upload-btn {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        padding: 8px 14px;
+        border-radius: 20px;
+        border: 1px solid var(--divider-color, #e0e0e0);
+        background: var(--card-background-color, #fff);
+        color: var(--primary-text-color);
+        font-size: 13px;
+        font-family: inherit;
+        cursor: pointer;
+        transition: background 0.15s;
+      }
+      .upload-btn:hover { background: var(--secondary-background-color, #f5f5f5); }
+      .upload-btn ha-icon { --mdc-icon-size: 18px; }
+      .upload-btn.save {
+        border-color: var(--primary-color, #03a9f4);
+        color: var(--primary-color, #03a9f4);
+        font-weight: 500;
+      }
+      .upload-btn.save:hover { background: rgba(3, 169, 244, 0.1); }
+      .upload-btn.remove {
+        border-color: var(--error-color, #db4437);
+        color: var(--error-color, #db4437);
+      }
+      .upload-btn.remove:hover { background: rgba(219, 68, 55, 0.1); }
     `;
   }
 
@@ -2492,7 +5003,241 @@ window.customCards = window.customCards || [];
 window.customCards.push({
   type: 'jukebox-card',
   name: 'Internet Radio Jukebox',
-  description: 'Internet radio jukebox with speaker selection, categorized stations, and now-playing detection.',
+  description: 'Multi-zone internet radio: playlists, station directory, drag-and-drop editing, per-speaker volumes.',
   preview: false,
   documentationURL: 'https://github.com/philrenda/jukebox-card',
 });
+window.customCards.push({
+  type: 'jukebox-button-card',
+  name: 'Jukebox Button',
+  description: 'Dashboard tile that opens your jukebox view — user-swappable image, text and font.',
+  preview: false,
+  documentationURL: 'https://github.com/philrenda/jukebox-card',
+});
+
+// ── jukebox-button-card ──
+// Dashboard tile companion: user-swappable image with fit options, a
+// fixed text label rendered as an overlay (so changing the image keeps
+// the text), tap = navigate. Long-press opens its self-service editor.
+class JukeboxButtonCard extends HTMLElement {
+  setConfig(config) {
+    this._config = { fit: 'fill', height: 72, label: 'JUKEBOX', ...config };
+    this._render();
+  }
+  set hass(hass) { this._hass = hass; }
+  getCardSize() { return 1; }
+
+  static get FONTS() {
+    return {
+      serif: "Georgia, 'Times New Roman', serif",
+      modern: "'Segoe UI', Roboto, Arial, sans-serif",
+      typewriter: "'Courier New', monospace",
+      script: "'Brush Script MT', 'Segoe Script', cursive",
+    };
+  }
+
+  _render() {
+    if (!this.shadowRoot) this.attachShadow({ mode: 'open' });
+    const c = this._config || {};
+    const fit = c.fit || 'fill';
+    const size = fit === 'fill' ? 'cover' : fit === 'fit' ? 'contain' : fit === 'stretch' ? '100% 100%' : 'auto';
+    const fs = Math.max(18, Math.round((c.height || 72) * 0.4));
+    const fontFam = this.constructor.FONTS[c.font || 'serif'] || this.constructor.FONTS.serif;
+    this.shadowRoot.innerHTML = `
+      <style>
+        :host { display: block; }
+        ha-card {
+          position: relative; overflow: hidden; cursor: pointer;
+          height: ${c.height || 72}px; border-radius: 12px;
+          background: ${c.image ? `url('${c.image}') center / ${size} no-repeat` : '#141418'};
+          user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+        }
+        .lbl {
+          position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+          font-family: ${fontFam}; font-weight: 700;
+          font-size: ${fs}px; letter-spacing: 7px; color: #fff;
+          text-shadow: 0 2px 10px #000, 0 0 4px #000;
+          background: ${c.label ? 'rgba(0,0,0,0.18)' : 'none'};
+          pointer-events: none;
+        }
+        .ed-overlay { position: fixed; inset: 0; z-index: 999; background: rgba(0,0,0,0.6);
+          display: flex; align-items: center; justify-content: center; }
+        .ed-modal { width: min(440px, 92vw); background: #1c1c22; color: #eee; border-radius: 14px;
+          padding: 16px; border: 1px solid #555; font-family: sans-serif; }
+        .ed-title { font-weight: 700; font-size: 15px; margin-bottom: 10px; }
+        .ed-prev { width: 100%; height: 84px; border-radius: 10px; border: 1px solid #555; margin-bottom: 10px;
+          position: relative; overflow: hidden; }
+        .ed-prev .lbl { font-size: 30px; }
+        .ed-inp { width: 100%; box-sizing: border-box; padding: 9px 11px; border-radius: 8px;
+          border: 1px solid #555; background: none; color: #eee; font-size: 13px; margin-bottom: 10px; }
+        .ed-fits { display: flex; gap: 8px; margin-bottom: 10px; }
+        .ed-fit { flex: 1; padding: 8px 0; border-radius: 8px; border: 1px solid #555; background: none;
+          color: #eee; font-size: 12px; cursor: pointer; }
+        .ed-fit.active { background: #03a9f4; border-color: #03a9f4; color: #fff; }
+        .ed-check { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; font-size: 13px; }
+        .ed-btns { display: flex; gap: 8px; }
+        .ed-btns button { flex: 1; padding: 10px 0; border-radius: 9px; border: 1px solid #555;
+          background: none; color: #eee; font-size: 13px; font-weight: 600; cursor: pointer; }
+        .ed-btns .save { background: #03a9f4; border-color: #03a9f4; color: #fff; }
+      </style>
+      <ha-card><div class="lbl">${c.label || ''}</div></ha-card>`;
+    const card = this.shadowRoot.querySelector('ha-card');
+    let t = null, lp = false;
+    card.addEventListener('contextmenu', e => e.preventDefault());
+    card.addEventListener('pointerdown', () => {
+      lp = false;
+      t = setTimeout(() => { t = null; lp = true; this._openEditor(); }, 500);
+    });
+    card.addEventListener('pointerup', () => {
+      if (t) { clearTimeout(t); t = null; }
+      if (lp) return;
+      this._tap();
+    });
+    ['pointerleave', 'pointercancel'].forEach(ev =>
+      card.addEventListener(ev, () => { if (t) { clearTimeout(t); t = null; } }));
+  }
+
+  _tap() {
+    const ta = this._config.tap_action;
+    if (ta && ta.action === 'navigate' && ta.navigation_path) {
+      history.pushState(null, '', ta.navigation_path);
+      window.dispatchEvent(new Event('location-changed'));
+    } else if (ta && ta.action === 'url' && ta.url_path) {
+      window.open(ta.url_path);
+    }
+  }
+
+  _openEditor() {
+    let image = this._config.image || '';
+    let fit = this._config.fit || 'fill';
+    let label = this._config.label || '';
+    let font = this._config.font || 'serif';
+    const overlay = document.createElement('div');
+    overlay.className = 'ed-overlay';
+    overlay.addEventListener('click', () => overlay.remove());
+    const modal = document.createElement('div');
+    modal.className = 'ed-modal';
+    modal.addEventListener('click', e => e.stopPropagation());
+    modal.innerHTML = `<div class="ed-title">Jukebox Button</div>
+      <div class="ed-prev"><div class="lbl"></div></div>`;
+    const prev = modal.querySelector('.ed-prev');
+    const prevLbl = prev.querySelector('.lbl');
+    const paint = () => {
+      const size = fit === 'fill' ? 'cover' : fit === 'fit' ? 'contain' : fit === 'stretch' ? '100% 100%' : 'auto';
+      prev.style.background = image ? `url('${image}') center / ${size} no-repeat` : '#141418';
+      prevLbl.textContent = label;
+      prevLbl.style.background = label ? 'rgba(0,0,0,0.18)' : 'none';
+      prevLbl.style.fontFamily = this.constructor.FONTS[font] || this.constructor.FONTS.serif;
+    };
+    const file = document.createElement('input');
+    file.type = 'file'; file.accept = 'image/*'; file.style.display = 'none';
+    file.addEventListener('change', () => {
+      const f = file.files && file.files[0];
+      if (!f) return;
+      const r = new FileReader();
+      r.onload = () => { image = r.result; paint(); };
+      r.readAsDataURL(f);
+    });
+    modal.appendChild(file);
+    const url = document.createElement('input');
+    url.className = 'ed-inp';
+    url.placeholder = 'or image URL (e.g. /local/button.jpg)';
+    url.value = image.startsWith('data:') ? '' : image;
+    url.addEventListener('change', () => { if (url.value.trim()) { image = url.value.trim(); paint(); } });
+    modal.appendChild(url);
+    const fits = document.createElement('div');
+    fits.className = 'ed-fits';
+    ['fill', 'fit', 'stretch', 'center'].forEach(f => {
+      const b = document.createElement('button');
+      b.className = 'ed-fit' + (f === fit ? ' active' : '');
+      b.textContent = f[0].toUpperCase() + f.slice(1);
+      b.addEventListener('click', e => {
+        e.stopPropagation(); fit = f;
+        fits.querySelectorAll('.ed-fit').forEach(x => x.classList.toggle('active', x === b));
+        paint();
+      });
+      fits.appendChild(b);
+    });
+    modal.appendChild(fits);
+    const lblInp = document.createElement('input');
+    lblInp.className = 'ed-inp';
+    lblInp.placeholder = 'Button text (empty = no text)';
+    lblInp.value = label;
+    lblInp.addEventListener('input', () => { label = lblInp.value; paint(); });
+    modal.appendChild(lblInp);
+    const fontRow = document.createElement('div');
+    fontRow.className = 'ed-fits';
+    Object.keys(this.constructor.FONTS).forEach(f => {
+      const b2 = document.createElement('button');
+      b2.className = 'ed-fit' + (f === font ? ' active' : '');
+      b2.textContent = f[0].toUpperCase() + f.slice(1);
+      b2.style.fontFamily = this.constructor.FONTS[f];
+      b2.addEventListener('click', e => {
+        e.stopPropagation(); font = f;
+        fontRow.querySelectorAll('.ed-fit').forEach(x => x.classList.toggle('active', x === b2));
+        paint();
+      });
+      fontRow.appendChild(b2);
+    });
+    modal.appendChild(fontRow);
+    const btns = document.createElement('div');
+    btns.className = 'ed-btns';
+    const mk = (label, cls, fn) => {
+      const b = document.createElement('button');
+      if (cls) b.className = cls;
+      b.textContent = label;
+      b.addEventListener('click', e => { e.stopPropagation(); fn(); });
+      btns.appendChild(b);
+    };
+    mk('Choose Image', '', () => file.click());
+    mk('Save', 'save', () => {
+      overlay.remove();
+      this._saveSelf({ image: image || null, fit, label, font });
+    });
+    mk('Cancel', '', () => overlay.remove());
+    modal.appendChild(btns);
+    overlay.appendChild(modal);
+    paint();
+    this.shadowRoot.appendChild(overlay);
+  }
+
+  async _saveSelf(patch) {
+    this._config = { ...this._config, ...patch };
+    for (const k of Object.keys(patch)) { if (patch[k] === null) delete this._config[k]; }
+    this._render();
+    if (!this._hass) return;
+    const here = location.pathname.split('/')[1] || null;
+    const targets = [...new Set([here, ...(this._config.sync_dashboards || [])])].filter(Boolean);
+    for (const urlPath of targets) {
+      try {
+        const cfg = await this._hass.callWS({ type: 'lovelace/config', url_path: urlPath });
+        let n = 0;
+        const walk = (o) => {
+          if (Array.isArray(o)) { o.forEach(walk); return; }
+          if (o && typeof o === 'object') {
+            if (o.type === 'custom:jukebox-button-card') {
+              for (const k of Object.keys(patch)) {
+                if (patch[k] === null) delete o[k]; else o[k] = patch[k];
+              }
+              n++;
+            }
+            Object.values(o).forEach(walk);
+          }
+        };
+        walk(cfg);
+        if (n) await this._hass.callWS({ type: 'lovelace/config/save', url_path: urlPath, config: cfg });
+      } catch (e) {
+        console.warn('jukebox-button-card: could not persist to', urlPath, e);
+      }
+    }
+  }
+}
+if (!customElements.get('jukebox-button-card')) {
+  customElements.define('jukebox-button-card', JukeboxButtonCard);
+}
+
+console.info(
+  '%c JUKEBOX-CARD %c v4.0.0 ',
+  'background:#FF9800;color:#000;font-weight:700;border-radius:4px 0 0 4px;padding:2px 6px;',
+  'background:#222;color:#FF9800;font-weight:700;border-radius:0 4px 4px 0;padding:2px 6px;'
+);

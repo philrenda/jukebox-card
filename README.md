@@ -1,100 +1,135 @@
-# Internet Radio Jukebox
+# Jukebox Card
 
-A custom Lovelace card for Home Assistant that turns your media players into an internet radio jukebox. Works out of the box with zero configuration — just add the card and start listening.
+A multi-zone internet-radio jukebox for Home Assistant dashboards. Play different stations on different speakers at the same time, browse and add stations from a 50,000-station directory, and manage playlists with iOS-style drag-and-drop — all from the card itself, no YAML editing required after setup.
 
-![HACS Badge](https://img.shields.io/badge/HACS-Custom-orange.svg)
-
-<img src="screenshots/jukebox-card.png" alt="Internet Radio Jukebox Screenshot" width="500">
+Ships with a starter set of station playlists so it works out of the box, plus a companion **Jukebox Button** tile card for opening your jukebox view from any dashboard.
 
 ## Features
 
-- **Zero-config** — add the card and it works immediately with 104 built-in stations
-- **Visual card editor** — manage everything through the UI, no YAML needed
-- **Station explorer** — search and browse thousands of stations via Radio Browser
-- **Auto-discovers speakers** — finds all media players with play-media support
-- **Cast device artwork** — pushes station logos to Chromecast, Nest Hub, and other Cast devices
-- **Smart speaker selection** — auto-selects the currently playing speaker on new browsers
-- **12 built-in genres** — Alternative, Rock, Metal, Pop, Lounge/Chill, Sleep, House, Tech House, 80s, Polish, Italian, French
-- **Dark and light theme support**
-- **Now-playing banner** with stop button
-- **Per-category grids** with horizontal scroll and pagination dots
-- **Volume control** with per-device volume for multi-speaker setups
+- **Zones** — cast different music to different speaker sets simultaneously. Zone chips across the top show each session ("Main House · WNCW"); tap a chip to control that zone, `+` to start a new one.
+- **Speaker picker** — checkbox dropdown with speaker groups and individual speakers, per-speaker volume sliders (shown only for checked speakers), and a master volume that moves the whole zone.
+- **Station directory** — browse [radio-browser.info](https://www.radio-browser.info) (Popular / by genre / by country / search), preview any station on your current zone with a tap, hold to add it to a playlist (or create a new playlist on the spot). Station artwork comes along automatically.
+- **Edit mode** — hard-press any station tile: everything jiggles, ✕ badges delete, drag tiles anywhere (auto-scrolls as you go, across playlists too). A top bar offers **Undo Last Change** (multi-step) and **Exit Edit Mode** (the single save point).
+- **Playlist manager** — hard-press any playlist title: reorder playlists by drag-handle or by typing an order number, delete a playlist (with confirmation).
+- **Custom artwork & backgrounds** — per-station custom images (tap a tile while in edit mode), and a Settings menu to set the card background from an upload or URL with Fill / Fit / Stretch / Center options.
+- **Permissions** — choose whether editing tools are visible to admins only or to everyone.
 
 ## Installation
 
-### HACS (Recommended)
+### HACS (recommended)
 
-1. Open HACS in Home Assistant
-2. Go to **Frontend** → three-dot menu → **Custom repositories**
-3. Add `https://github.com/philrenda/jukebox-card` as a **Dashboard** repository
-4. Click **Install**
-5. Restart Home Assistant
+1. HACS → three-dot menu → **Custom repositories** → add `https://github.com/philrenda/jukebox-card` with category **Dashboard**.
+2. Install **Jukebox Card**, then reload your browser when prompted.
+
+HACS registers the resource automatically. Both cards then appear in the Lovelace card picker as **Internet Radio Jukebox** and **Jukebox Button** — add them straight from the UI, no YAML needed.
 
 ### Manual
 
-1. Download `jukebox-card.js` from the [latest release](https://github.com/philrenda/jukebox-card/releases)
-2. Copy it to `/config/www/jukebox-card.js`
-3. Add the resource in **Settings → Dashboards → Resources**:
-   - URL: `/local/jukebox-card.js`
-   - Type: JavaScript Module
+1. Copy `jukebox-card.js` to `config/www/jukebox-card.js`.
+2. Add the resource (Settings → Dashboards → ⋮ → Resources, or YAML):
 
-## Quick Start
+```yaml
+lovelace:
+  resources:
+    - url: /local/jukebox-card.js
+      type: module
+```
 
-1. Edit your dashboard and click **+ Add Card**
-2. Search for **Internet Radio Jukebox**
-3. Click any station tile to start playing on the selected speaker
+3. Restart Home Assistant, hard-refresh your browser, and add the card from the picker.
 
-That's it! The card auto-discovers your speakers and comes loaded with 104 stations across 12 genres.
+## Card configuration
 
-## Configuration (Visual Editor)
+A bare card works immediately — speakers are auto-discovered and the built-in starter playlists load:
 
-Everything is configured through the card's built-in visual editor — no YAML required.
+```yaml
+type: custom:jukebox-card
+```
 
-### General Tab
+All options:
 
-- **Columns** — number of station tiles per row (1–8, default 4)
-- **Tile Height** — height of each station tile in pixels (40–300, default 120)
-- **Speaker Mode** — choose between:
-  - **Auto-discover** — automatically finds all media players that support play-media
-  - **Manual** — define a specific list of speakers (see below)
+```yaml
+type: custom:jukebox-card
+columns: 4                 # station tiles per row
+tile_height: 120           # px
+categories:                # your playlists — created/edited from the UI,
+  - name: Jazz             # you rarely need to touch this by hand
+    stations:
+      - name: Example FM
+        url: https://example.com/stream
+        logo: https://example.com/logo.png
+speakers:                  # optional manual speaker list (default: auto-discover)
+  - name: Kitchen
+    entity: media_player.kitchen
+speaker_groups:            # optional group membership map — see "Speaker groups"
+  media_player.whole_home:
+    - media_player.kitchen
+    - media_player.living_room
+sync_dashboards:           # keep playlists identical across dashboards:
+  - main-dashboard         # every save writes to the jukebox cards on all
+  - tablet-dashboard       # listed dashboards (url paths)
+background_image: /local/mural.jpg
+background_fit: fill       # fill | fit | stretch | center
+background_dim: 0.62       # darkening overlay 0–1
+allow_non_admin_edit: false
+```
 
-### Adding Speakers (Manual Mode)
+### Jukebox Button (companion tile)
 
-1. In the **General** tab, switch speaker mode to **Manual**
-2. Click **+ Add Speaker**
-3. Enter a display name and select a `media_player` entity from the dropdown
-4. Use the arrow buttons to reorder speakers
-5. The first speaker in the list is the default selection
+```yaml
+type: custom:jukebox-button-card
+image: /local/jukebox.jpg
+fit: fill                  # fill | fit | stretch | center
+height: 72
+label: JUKEBOX             # rendered as an overlay — swap the image, keep the text
+font: serif                # serif | modern | typewriter | script
+tap_action:
+  action: navigate
+  navigation_path: /lovelace/jukebox
+```
 
-### Managing Categories
+Long-press the button itself to open its editor (image upload/URL, fit, text, font) — changes save back to the dashboard automatically.
 
-In the **Stations** tab, each genre is a collapsible category:
+## Speaker groups — what to expect
 
-- **Rename** — click the ✎ pencil icon next to the category name (or double-click the name)
-- **Reorder** — use the ▲ ▼ arrow buttons to move categories up or down
-- **Delete** — click the × button to remove a category
-- **Add** — click **+ Add Category** at the bottom to create a new category
+Group support depends on what your media platform exposes:
 
-### Adding Stations
+| Platform | Group detected? | Members auto-detected? |
+|---|---|---|
+| **Sonos / platforms with `group_members`** | ✅ | ✅ immediately (native attribute) |
+| **Google Cast groups** | ✅ (device registry) | ⚠️ learned the **first time the group plays** |
+| **Amazon Echo (alexa_media)** | ❌ appears as a normal speaker | — |
 
-Expand a category and click **+ Add Station** to open the station panel with three options:
+**Google Cast:** Home Assistant does not expose Cast group membership, so the card learns it automatically — play anything on the group once and from then on its member speakers appear as checkboxes (with individual volume sliders) whenever the group is selected. The learned map is stored per browser, so each tablet/device learns on its own first group-play. To skip the learning step — or to pin membership across all devices — declare it explicitly with `speaker_groups:` (an explicit map always overrides what was learned).
 
-**Explore** — Search thousands of internet radio stations by name. Results show the station's country, genre tags, bitrate, and codec. Click the ▶ button to preview, then click **+** to add.
+**Amazon Echo:** playback works via a silent TuneIn directive (no voice involved), which matches stations **by name** — reliable for well-known stations, hit-or-miss for obscure directory finds. Echo multi-room groups are not detectable as groups and appear as ordinary speakers.
 
-**Browse Defaults** — Browse the 104 built-in stations organized by genre. Stations already in your category show a ✓ checkmark.
+**Zone conflict rule (strict no-steal):** a speaker in use by one zone shows as disabled ("in Main House") everywhere else. To move it, uncheck it in the zone that owns it — it stops there and instantly becomes available. A group is selectable only when *every* member is free. Unchecking one member of a playing group breaks the group: the group control drops, remaining speakers continue individually.
 
-**Manual** — Enter a station name, stream URL, and optional logo URL to add any station.
+## Gestures cheat-sheet
 
-### Resetting to Defaults
+| Where | Gesture | Action |
+|---|---|---|
+| Station tile | Tap | Play on the active zone |
+| Station tile | **Hard press** | Enter edit mode (jiggle) — never plays audio |
+| Tile (edit mode) | Drag | Move within/between playlists (edges auto-scroll) |
+| Tile (edit mode) | ✕ badge | Delete station (undoable) |
+| Tile (edit mode) | Tap | Custom artwork editor |
+| Edit-mode top bar | Undo / Exit | Undo any change this session / save everything & leave |
+| Playlist title | **Hard press** | Playlist manager: drag-handle reorder, order numbers (typing 2 on #7 makes it #2 and shifts the rest), ✕ delete with confirmation |
+| Zone chip | Tap | Switch which zone the controls target |
+| Zone chip | **Hard press** | "Remove zone?" (stops its audio) |
+| Directory row | Tap | Preview on the active zone (stop button appears on the playing row) |
+| Directory row | **Hard press** | Add to a playlist / create a new playlist |
+| Jukebox Button | **Long press** | Edit its image / fit / text / font |
 
-If you've customized your stations and want to start over, click **Reset to Defaults** at the bottom of the Stations tab.
+## Good to know
 
-## How It Works
-
-- **Speaker persistence** — your selected speaker is saved per-browser via localStorage
-- **Active speaker detection** — on a new browser with no saved preference, the card auto-selects whichever speaker is currently playing (prefers speaker groups over individual devices)
-- **Cast artwork** — station logos are sent to Cast devices (Nest Hub, Chromecast, etc.) as signed URLs, so artwork displays correctly even through Nabu Casa remote access
-- **Now-playing helper** — the card creates an `input_text.jukebox_now_playing` helper to track the current station across devices
+- **Saving requires an admin account.** Home Assistant only lets admins write dashboards. The Permissions setting can *show* editing tools to everyone, but a non-admin's edits appear to work only until their page reloads — they are never persisted. (Kiosk tablets running a dedicated admin user work fully.)
+- **Storage-mode dashboards only** for in-UI saving (the HA default). YAML-mode dashboards can use every playback feature, but edits must be made in YAML.
+- Playlists live in the card's config on the dashboard. Use `sync_dashboards` to keep several dashboards on one shared "master" list.
+- Uploaded images are embedded as data-URIs in the dashboard config — fine for logos and buttons; for large background murals prefer a file in `/config/www` referenced as `/local/...`.
+- If your HA is accessed over HTTPS, `http://` station logos won't display (mixed content) — playback itself is unaffected since the speaker fetches the stream directly.
+- Zones persist across page reloads (per device) and rebuild themselves from whatever is actually playing — sessions started outside the jukebox (voice assistants etc.) show up as their own zone chips.
 
 ## License
 
