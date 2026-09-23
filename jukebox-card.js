@@ -1652,7 +1652,7 @@ class JukeboxCard extends HTMLElement {
       }
     }
 
-    this._config = { columns: 4, tile_height: 120, ...config };
+    this._config = { tile_height: 120, ...config }; // columns: auto from width unless set
 
     // Zones are reconstructed from live playback state
     this._zones = null;
@@ -2530,9 +2530,21 @@ class JukeboxCard extends HTMLElement {
       const fit = config.background_fit || 'fill';
       const size = fit === 'fill' ? 'cover' : fit === 'fit' ? 'contain' : fit === 'stretch' ? '100% 100%' : 'auto';
       const dim = config.background_dim !== undefined ? config.background_dim : 0.62;
-      card.style.background =
-        `linear-gradient(rgba(12,12,16,${dim}), rgba(12,12,16,${dim})), ` +
-        `url('${config.background_image}') center / ${size} no-repeat fixed`;
+      const applyBg = (u) => {
+        card.style.background =
+          `linear-gradient(rgba(12,12,16,${dim}), rgba(12,12,16,${dim})), ` +
+          `url('${u}') center / ${size} no-repeat fixed`;
+      };
+      const ref = config.background_image;
+      if (ref.startsWith('media-source://')) {
+        // media folder auth-URLs expire — store the ref, resolve fresh
+        if (this._bgCache && this._bgCache.id === ref) applyBg(this._bgCache.url);
+        jbResolveMedia(this._hass, ref)
+          .then(u => { this._bgCache = { id: ref, url: u }; applyBg(u); })
+          .catch(() => {});
+      } else {
+        applyBg(ref);
+      }
     }
 
     const style = document.createElement('style');
@@ -2541,7 +2553,23 @@ class JukeboxCard extends HTMLElement {
 
     const container = document.createElement('div');
     container.className = 'jukebox';
-    container.style.setProperty('--columns', config.columns);
+    const effCols = config.columns || this._autoCols || 4;
+    container.style.setProperty('--columns', effCols);
+    // responsive: derive columns from real container width (masonry view
+    // cells, phone screens, panel views all differ) unless config pins it
+    if (!this._roCols) {
+      this._roCols = new ResizeObserver(entries => {
+        const w = entries[0] && entries[0].contentRect ? entries[0].contentRect.width : 0;
+        if (!w) return;
+        const auto = Math.max(2, Math.min(6, Math.floor(w / 170)));
+        if (auto !== this._autoCols) {
+          this._autoCols = auto;
+          if (!this._config.columns) { this._lastStructuralHash = null; this._render(); }
+        }
+      });
+    }
+    this._roCols.disconnect();
+    this._roCols.observe(container);
     this._containerEl = container;
     container.addEventListener('scroll', ev => {
       const t = ev.target;
@@ -2769,7 +2797,7 @@ class JukeboxCard extends HTMLElement {
       scroller.dataset.category = catIdx;
 
       // Split into pages
-      const cols = config.columns;
+      const cols = effCols;
       const pages = [];
       for (let i = 0; i < cat.stations.length; i += cols) {
         pages.push(cat.stations.slice(i, i + cols));
@@ -3222,11 +3250,13 @@ class JukeboxCard extends HTMLElement {
   // storage dashboard — self-service, works for any HA admin user.
   // Patch arbitrary keys on every jukebox card across sync_dashboards
   // (null value deletes the key). Same mechanism as _saveCategories.
-  async _saveCardConfig(patch, render = true) {
+  async _saveCardConfig(patch, render = true, sync = true) {
     this._config = { ...this._config, ...patch };
     for (const k of Object.keys(patch)) { if (patch[k] === null) delete this._config[k]; }
     const here = location.pathname.split('/')[1] || null;
-    const targets = [...new Set([here, ...(this._config.sync_dashboards || [])])].filter(Boolean);
+    const targets = sync
+      ? [...new Set([here, ...(this._config.sync_dashboards || [])])].filter(Boolean)
+      : [here].filter(Boolean);
     for (const urlPath of targets) {
       try {
         const cfg = await this._hass.callWS({ type: 'lovelace/config', url_path: urlPath });
@@ -3313,10 +3343,12 @@ class JukeboxCard extends HTMLElement {
     };
     if (this._canEdit()) {
       item('mdi:playlist-plus', 'Add stations…', () => this._openDir());
-      item('mdi:image', 'Background…', () => this._openBgEditor());
     }
     if (this._isAdmin()) {
-      item('mdi:account-lock', 'Permissions…', () => this._openPermissions());
+      // background + permissions are admin-only regardless of the
+      // "everyone can edit" setting (that setting covers playlists)
+      item('mdi:image', 'Background…', () => this._openBgEditor());
+      item('mdi:account-lock', 'Permissions & Speakers…', () => this._openPermissions());
     }
     if (!menu.children.length) {
       const row = document.createElement('div');
@@ -3344,6 +3376,8 @@ class JukeboxCard extends HTMLElement {
     overlay.addEventListener('click', () => overlay.remove());
     const modal = document.createElement('div');
     modal.className = 'image-upload-modal';
+    modal.style.maxHeight = '86vh';
+    modal.style.overflowY = 'auto';
     modal.addEventListener('click', e => e.stopPropagation());
     modal.innerHTML = `<div class="image-upload-title">Who can edit playlists &amp; settings?</div>`;
     let allow = !!this._config.allow_non_admin_edit;
@@ -3366,8 +3400,63 @@ class JukeboxCard extends HTMLElement {
     const note = document.createElement('div');
     note.className = 'dir-sub';
     note.style.cssText = 'padding:4px 2px 12px;white-space:normal;';
-    note.textContent = 'Note: Home Assistant only lets ADMIN accounts write dashboards. With "Everyone", a non-admin user\u2019s edits will APPEAR to work but only last until their page reloads \u2014 they are never actually saved, and other devices never see them.';
+    note.textContent = 'Applies to this dashboard only. Note: Home Assistant only lets ADMIN accounts write dashboards \u2014 with "Everyone", a non-admin\u2019s edits appear to work but vanish when their page reloads.';
     modal.appendChild(note);
+
+    // ── per-dashboard speaker availability ──
+    const spTitle = document.createElement('div');
+    spTitle.className = 'image-upload-title';
+    spTitle.style.marginTop = '6px';
+    spTitle.textContent = 'Speakers available on THIS dashboard';
+    modal.appendChild(spTitle);
+    const spNote = document.createElement('div');
+    spNote.className = 'dir-sub';
+    spNote.style.cssText = 'padding:0 2px 8px;white-space:normal;';
+    spNote.textContent = 'Saved for this dashboard only \u2014 e.g. limit a guest dashboard to guest-area speakers.';
+    modal.appendChild(spNote);
+    const pool = this._autoDiscoverSpeakers();
+    const manual = this._config.speakers && this._config.speakers.length
+      ? new Set(this._config.speakers.map(sp => sp.entity)) : null;
+    let autoMode = !manual;
+    const checked = new Set(manual ? [...manual].filter(e => pool.find(p => p.entity === e)) : pool.map(p => p.entity));
+    // explicit auto-discover toggle: ON = all current AND FUTURE speakers;
+    // OFF = pinned manual selection below
+    const autoRow = document.createElement('div');
+    autoRow.className = 'speaker-item';
+    autoRow.style.marginBottom = '6px';
+    autoRow.innerHTML = `<span class="spk-check${autoMode ? ' checked' : ''}"></span><span class="spk-name" style="flex:1">Auto-discover &amp; add new speakers</span>`;
+    modal.appendChild(autoRow);
+    const spList = document.createElement('div');
+    spList.style.cssText = 'max-height:220px;overflow-y:auto;border:1px solid var(--divider-color,#555);border-radius:10px;padding:4px;margin-bottom:12px;';
+    const syncListState = () => {
+      spList.style.opacity = autoMode ? '0.45' : '1';
+      spList.style.pointerEvents = autoMode ? 'none' : 'auto';
+      if (autoMode) {
+        checked.clear();
+        pool.forEach(p => checked.add(p.entity));
+        spList.querySelectorAll('.spk-check').forEach(c => c.classList.add('checked'));
+      }
+    };
+    autoRow.addEventListener('click', e => {
+      e.stopPropagation();
+      autoMode = !autoMode;
+      autoRow.querySelector('.spk-check').classList.toggle('checked', autoMode);
+      syncListState();
+    });
+    for (const sp of pool) {
+      const row = document.createElement('div');
+      row.className = 'speaker-item';
+      row.innerHTML = `<span class="spk-check${checked.has(sp.entity) ? ' checked' : ''}"></span><span class="spk-name" style="flex:1">${this._esc ? this._esc(sp.name) : sp.name}</span>`;
+      row.addEventListener('click', e => {
+        e.stopPropagation();
+        const chk = row.querySelector('.spk-check');
+        if (checked.has(sp.entity)) { checked.delete(sp.entity); chk.classList.remove('checked'); }
+        else { checked.add(sp.entity); chk.classList.add('checked'); }
+      });
+      spList.appendChild(row);
+    }
+    modal.appendChild(spList);
+    syncListState();
     const btns = document.createElement('div');
     btns.className = 'image-upload-buttons';
     const mk = (label, cls, fn) => {
@@ -3377,7 +3466,16 @@ class JukeboxCard extends HTMLElement {
       b.addEventListener('click', e => { e.stopPropagation(); fn(); });
       btns.appendChild(b);
     };
-    mk('Save', 'save', () => { overlay.remove(); this._saveCardConfig({ allow_non_admin_edit: allow || null }, false); });
+    mk('Save', 'save', () => {
+      if (!autoMode && !checked.size) { spNote.textContent = 'Select at least one speaker (or turn auto-discover on).'; spNote.style.color = '#ef5350'; return; }
+      overlay.remove();
+      // BOTH settings are per-dashboard (sync_dashboards shares playlists only)
+      this._saveCardConfig({ allow_non_admin_edit: allow || null }, false, false);
+      const list = autoMode
+        ? null // auto-discover: current and future speakers appear automatically
+        : pool.filter(p => checked.has(p.entity)).map(p => ({ name: p.name, entity: p.entity }));
+      this._saveCardConfig({ speakers: list }, true, false);
+    });
     mk('Cancel', '', () => overlay.remove());
     modal.appendChild(btns);
     overlay.appendChild(modal);
@@ -3397,37 +3495,29 @@ class JukeboxCard extends HTMLElement {
 
     let image = this._config.background_image || '';
     let fit = this._config.background_fit || 'fill';
+    let previewUrl = null;
 
     const preview = document.createElement('div');
     preview.className = 'bg-preview';
     const paint = () => {
       const size = fit === 'fill' ? 'cover' : fit === 'fit' ? 'contain' : fit === 'stretch' ? '100% 100%' : 'auto';
-      preview.style.background = image
-        ? `linear-gradient(rgba(12,12,16,0.62), rgba(12,12,16,0.62)), url('${image}') center / ${size} no-repeat`
+      const shown = image.startsWith('media-source://') ? previewUrl : image;
+      preview.style.background = shown
+        ? `linear-gradient(rgba(12,12,16,0.62), rgba(12,12,16,0.62)), url('${shown}') center / ${size} no-repeat`
         : 'rgba(127,127,127,0.15)';
       preview.textContent = image ? '' : 'No background set';
     };
+    if (image.startsWith('media-source://')) {
+      jbResolveMedia(this._hass, image).then(u => { previewUrl = u; paint(); }).catch(() => {});
+    }
     paint();
     modal.appendChild(preview);
-
-    const fileInput = document.createElement('input');
-    fileInput.type = 'file';
-    fileInput.accept = 'image/*';
-    fileInput.style.display = 'none';
-    fileInput.addEventListener('change', () => {
-      const f = fileInput.files && fileInput.files[0];
-      if (!f) return;
-      const reader = new FileReader();
-      reader.onload = () => { image = reader.result; paint(); };
-      reader.readAsDataURL(f);
-    });
-    modal.appendChild(fileInput);
 
     const urlInp = document.createElement('input');
     urlInp.className = 'dir-search';
     urlInp.placeholder = 'or image URL (e.g. /local/mural.jpg)';
-    urlInp.value = image.startsWith('data:') ? '' : image;
-    urlInp.addEventListener('change', () => { if (urlInp.value.trim()) { image = urlInp.value.trim(); paint(); } });
+    urlInp.value = (image.startsWith('data:') || image.startsWith('media-source://')) ? '' : image;
+    urlInp.addEventListener('change', () => { if (urlInp.value.trim()) { image = urlInp.value.trim(); previewUrl = null; paint(); } });
     modal.appendChild(urlInp);
 
     const fits = document.createElement('div');
@@ -3455,7 +3545,13 @@ class JukeboxCard extends HTMLElement {
       btn.addEventListener('click', e => { e.stopPropagation(); fn(); });
       btnRow.appendChild(btn);
     };
-    mk('Choose Image', '', () => fileInput.click());
+    mk('Browse Media', '', () => {
+      jbMediaBrowser(this._hass, this._containerEl || this.shadowRoot, (id, url) => {
+        image = id;
+        previewUrl = url;
+        paint();
+      });
+    });
     mk('Save', 'save', () => {
       overlay.remove();
       this._saveCardConfig({ background_image: image || null, background_fit: image ? fit : null }, true);
@@ -4999,6 +5095,108 @@ class JukeboxCard extends HTMLElement {
 customElements.define('jukebox-card-editor', JukeboxCardEditor);
 customElements.define('jukebox-card', JukeboxCard);
 
+// ── shared media-folder helpers (used by both cards' background pickers) ──
+async function jbBrowseMedia(hass, id) {
+  const req = { type: 'media_source/browse_media' };
+  if (id) req.media_content_id = id;
+  return await hass.callWS(req);
+}
+async function jbResolveMedia(hass, id) {
+  const r = await hass.callWS({ type: 'media_source/resolve_media', media_content_id: id });
+  return r.url;
+}
+// Folder-navigating image picker. Opens in /media ("My media") when it
+// exists, else at the media-source list. onPick(mediaContentId, resolvedUrl).
+function jbMediaBrowser(hass, host, onPick) {
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:10050;background:rgba(0,0,0,0.65);display:flex;align-items:center;justify-content:center;';
+  overlay.addEventListener('click', () => overlay.remove());
+  const modal = document.createElement('div');
+  modal.style.cssText = 'width:min(520px,94vw);max-height:80vh;background:#1c1c22;color:#eee;border:1px solid #555;border-radius:14px;display:flex;flex-direction:column;font-family:sans-serif;overflow:hidden;';
+  modal.addEventListener('click', e => e.stopPropagation());
+  const head = document.createElement('div');
+  head.style.cssText = 'display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid #555;flex-shrink:0;';
+  const back = document.createElement('button');
+  back.textContent = '‹';
+  back.style.cssText = 'background:none;border:none;color:#eee;font-size:22px;cursor:pointer;padding:2px 10px;';
+  const title = document.createElement('div');
+  title.style.cssText = 'flex:1;font-weight:600;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+  const close = document.createElement('button');
+  close.innerHTML = '&times;';
+  close.style.cssText = 'background:none;border:none;color:#eee;font-size:22px;cursor:pointer;padding:2px 10px;';
+  close.addEventListener('click', () => overlay.remove());
+  head.appendChild(back); head.appendChild(title); head.appendChild(close);
+  modal.appendChild(head);
+  const body = document.createElement('div');
+  body.style.cssText = 'flex:1;overflow-y:auto;padding:8px;';
+  modal.appendChild(body);
+  overlay.appendChild(modal);
+  host.appendChild(overlay);
+
+  const stack = [];
+  const show = async (id, autoEnteredMedia) => {
+    body.innerHTML = '<div style="padding:12px;opacity:.7;font-size:13px;">Loading…</div>';
+    let res;
+    try { res = await jbBrowseMedia(hass, id); }
+    catch (e) {
+      body.innerHTML = '<div style="padding:12px;opacity:.7;font-size:13px;">Media browsing unavailable.</div>';
+      return;
+    }
+    // default straight into "My media" (/media folder) when present
+    if (autoEnteredMedia) {
+      const mine = (res.children || []).find(c => c.media_content_id === 'media-source://media_source');
+      if (mine) {
+        stack.push({ id, title: res.title || 'Media' });
+        show(mine.media_content_id, false);
+        return;
+      }
+    }
+    title.textContent = res.title || 'Media';
+    back.style.visibility = stack.length ? 'visible' : 'hidden';
+    body.innerHTML = '';
+    const kids = (res.children || []).filter(c =>
+      c.can_expand ||
+      c.media_class === 'image' ||
+      (c.media_content_type || '').startsWith('image/'));
+    if (!kids.length) {
+      body.innerHTML = '<div style="padding:12px;opacity:.7;font-size:13px;">No folders or images here.</div>';
+    }
+    for (const c of kids) {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:center;gap:12px;padding:9px 8px;border-radius:8px;cursor:pointer;';
+      row.addEventListener('mouseenter', () => { row.style.background = 'rgba(127,127,127,0.15)'; });
+      row.addEventListener('mouseleave', () => { row.style.background = 'none'; });
+      const ico = document.createElement('div');
+      ico.style.cssText = 'width:38px;height:38px;border-radius:8px;background:rgba(127,127,127,0.15);display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;background-size:cover;background-position:center;';
+      if (c.thumbnail) { ico.style.backgroundImage = `url('${c.thumbnail}')`; }
+      else { ico.textContent = c.can_expand ? '📁' : '🖼'; }
+      row.appendChild(ico);
+      const nm = document.createElement('div');
+      nm.style.cssText = 'flex:1;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+      nm.textContent = c.title;
+      row.appendChild(nm);
+      row.addEventListener('click', async e => {
+        e.stopPropagation();
+        if (c.can_expand) {
+          stack.push({ id, title: res.title });
+          show(c.media_content_id, false);
+        } else {
+          let url = null;
+          try { url = await jbResolveMedia(hass, c.media_content_id); } catch (e2) {}
+          overlay.remove();
+          onPick(c.media_content_id, url);
+        }
+      });
+      body.appendChild(row);
+    }
+  };
+  back.addEventListener('click', () => {
+    const prev = stack.pop();
+    if (prev) show(prev.id, false);
+  });
+  show(undefined, true);
+}
+
 window.customCards = window.customCards || [];
 window.customCards.push({
   type: 'jukebox-card',
@@ -5024,7 +5222,11 @@ class JukeboxButtonCard extends HTMLElement {
     this._config = { fit: 'fill', height: 72, label: 'JUKEBOX', ...config };
     this._render();
   }
-  set hass(hass) { this._hass = hass; }
+  set hass(hass) {
+    const first = !this._hass;
+    this._hass = hass;
+    if (first && this._config && (this._config.image || '').startsWith('media-source://')) this._render();
+  }
   getCardSize() { return 1; }
 
   static get FONTS() {
@@ -5043,13 +5245,23 @@ class JukeboxButtonCard extends HTMLElement {
     const size = fit === 'fill' ? 'cover' : fit === 'fit' ? 'contain' : fit === 'stretch' ? '100% 100%' : 'auto';
     const fs = Math.max(18, Math.round((c.height || 72) * 0.4));
     const fontFam = this.constructor.FONTS[c.font || 'serif'] || this.constructor.FONTS.serif;
+    let bgImage = c.image || '';
+    if (bgImage.startsWith('media-source://')) {
+      bgImage = (this._imgCache && this._imgCache.id === c.image) ? this._imgCache.url : '';
+      if (!bgImage && this._hass) {
+        jbResolveMedia(this._hass, c.image).then(u => {
+          this._imgCache = { id: c.image, url: u };
+          this._render();
+        }).catch(() => {});
+      }
+    }
     this.shadowRoot.innerHTML = `
       <style>
         :host { display: block; }
         ha-card {
           position: relative; overflow: hidden; cursor: pointer;
           height: ${c.height || 72}px; border-radius: 12px;
-          background: ${c.image ? `url('${c.image}') center / ${size} no-repeat` : '#141418'};
+          background: ${bgImage ? `url('${bgImage}') center / ${size} no-repeat` : '#141418'};
           user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
         }
         .lbl {
@@ -5108,10 +5320,15 @@ class JukeboxButtonCard extends HTMLElement {
   }
 
   _openEditor() {
+    // long-press editor is admin-only — guests on kiosk dashboards must
+    // not be able to fiddle with the button (their saves would be
+    // rejected by HA anyway, but don't even show the editor)
+    if (!(this._hass && this._hass.user && this._hass.user.is_admin)) return;
     let image = this._config.image || '';
     let fit = this._config.fit || 'fill';
     let label = this._config.label || '';
     let font = this._config.font || 'serif';
+    let previewUrl = (this._imgCache && this._imgCache.id === image) ? this._imgCache.url : null;
     const overlay = document.createElement('div');
     overlay.className = 'ed-overlay';
     overlay.addEventListener('click', () => overlay.remove());
@@ -5124,26 +5341,20 @@ class JukeboxButtonCard extends HTMLElement {
     const prevLbl = prev.querySelector('.lbl');
     const paint = () => {
       const size = fit === 'fill' ? 'cover' : fit === 'fit' ? 'contain' : fit === 'stretch' ? '100% 100%' : 'auto';
-      prev.style.background = image ? `url('${image}') center / ${size} no-repeat` : '#141418';
+      const shown = image.startsWith('media-source://') ? previewUrl : image;
+      prev.style.background = shown ? `url('${shown}') center / ${size} no-repeat` : '#141418';
       prevLbl.textContent = label;
       prevLbl.style.background = label ? 'rgba(0,0,0,0.18)' : 'none';
       prevLbl.style.fontFamily = this.constructor.FONTS[font] || this.constructor.FONTS.serif;
     };
-    const file = document.createElement('input');
-    file.type = 'file'; file.accept = 'image/*'; file.style.display = 'none';
-    file.addEventListener('change', () => {
-      const f = file.files && file.files[0];
-      if (!f) return;
-      const r = new FileReader();
-      r.onload = () => { image = r.result; paint(); };
-      r.readAsDataURL(f);
-    });
-    modal.appendChild(file);
+    if (image.startsWith('media-source://') && !previewUrl && this._hass) {
+      jbResolveMedia(this._hass, image).then(u => { previewUrl = u; paint(); }).catch(() => {});
+    }
     const url = document.createElement('input');
     url.className = 'ed-inp';
     url.placeholder = 'or image URL (e.g. /local/button.jpg)';
-    url.value = image.startsWith('data:') ? '' : image;
-    url.addEventListener('change', () => { if (url.value.trim()) { image = url.value.trim(); paint(); } });
+    url.value = (image.startsWith('data:') || image.startsWith('media-source://')) ? '' : image;
+    url.addEventListener('change', () => { if (url.value.trim()) { image = url.value.trim(); previewUrl = null; paint(); } });
     modal.appendChild(url);
     const fits = document.createElement('div');
     fits.className = 'ed-fits';
@@ -5189,7 +5400,15 @@ class JukeboxButtonCard extends HTMLElement {
       b.addEventListener('click', e => { e.stopPropagation(); fn(); });
       btns.appendChild(b);
     };
-    mk('Choose Image', '', () => file.click());
+    mk('Browse Media', '', () => {
+      if (!this._hass) return;
+      jbMediaBrowser(this._hass, this.shadowRoot, (id, u) => {
+        image = id;
+        previewUrl = u;
+        this._imgCache = { id, url: u };
+        paint();
+      });
+    });
     mk('Save', 'save', () => {
       overlay.remove();
       this._saveSelf({ image: image || null, fit, label, font });
@@ -5237,7 +5456,7 @@ if (!customElements.get('jukebox-button-card')) {
 }
 
 console.info(
-  '%c JUKEBOX-CARD %c v4.0.0 ',
+  '%c JUKEBOX-CARD %c v4.1.0 ',
   'background:#FF9800;color:#000;font-weight:700;border-radius:4px 0 0 4px;padding:2px 6px;',
   'background:#222;color:#FF9800;font-weight:700;border-radius:0 4px 4px 0;padding:2px 6px;'
 );

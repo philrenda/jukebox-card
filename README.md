@@ -49,7 +49,7 @@ All options:
 
 ```yaml
 type: custom:jukebox-card
-columns: 4                 # station tiles per row
+columns: 4                 # optional — omit for responsive auto-columns
 tile_height: 120           # px
 categories:                # your playlists — created/edited from the UI,
   - name: Jazz             # you rarely need to touch this by hand
@@ -107,20 +107,21 @@ Group support depends on what your media platform exposes:
 
 ## Backgrounds & artwork — step by step
 
-**Card background** (the mural behind the whole jukebox):
+**Card background** (the mural behind the whole jukebox — admins only):
 1. Open the jukebox and tap the **⚙ gear** next to the speaker picker.
 2. Choose **Background…**
-3. Either **Choose Image** (uploads from your device, stored in the dashboard) or paste an **image URL** (for large murals, prefer a file you've placed in `config/www`, referenced as `/local/yourfile.jpg`).
-4. Pick how it fills the card — **Fill** (crop to cover), **Fit** (letterbox, whole image visible), **Stretch** (distort to fill), or **Center** (natural size) — the preview updates live.
-5. **Save**. A dark overlay is applied automatically so stations stay readable (tunable via `background_dim`).
+3. **Browse Media** opens a folder navigator that starts in your `/media` folder ("My media") — back also reaches your other media sources (Image upload, AI-generated images, …). Tap an image to pick it. Or paste an **image URL** (`/local/yourfile.jpg` for files in `config/www`).
+   *To use your own picture, upload it first via Home Assistant's Media page (sidebar → Media → My media → upload) — then pick it here.*
+4. Pick how it fills the card — **Fill** (crop to cover), **Fit** (letterbox), **Stretch**, or **Center** — the preview updates live.
+5. **Save**. A dark overlay keeps stations readable (tunable via `background_dim`). Media-folder picks are stored as durable references and re-resolved on every load, so they never expire.
 
-**Jukebox Button background** (the dashboard tile):
+**Jukebox Button** (the dashboard tile — admins only):
 1. **Long-press the button itself** — its editor opens.
-2. Choose/paste an image and pick a fit, same options as above.
-3. Set the overlay **text** (clear it for no text) and pick one of four **fonts** — the text is drawn on top of the image, so you can swap images any time and keep your label.
-4. **Save** — the change writes back to the dashboard (and to every dashboard listed in `sync_dashboards`).
+2. Browse Media / URL for the image, pick a fit.
+3. Set the overlay **text** (clear it for no text) and one of four **fonts** — the text is drawn on top of the image, so you can swap images any time and keep your label.
+4. **Save** — writes back to the dashboard (and any dashboards in its `sync_dashboards`).
 
-**Station artwork**: stations added from the directory bring their own logos. To customize any tile: hard-press a tile to enter edit mode, then **tap** the tile — the artwork editor lets you upload, pan and zoom an image for that station.
+**Station artwork**: stations added from the directory bring their own logos. To customize a tile: hard-press to enter edit mode, then **tap** the tile — upload, pan and zoom an image for that station.
 
 ## Gestures cheat-sheet
 
@@ -139,6 +140,21 @@ Group support depends on what your media platform exposes:
 | Directory row | **Hard press** | Add to a playlist / create a new playlist |
 | Jukebox Button | **Long press** | Edit its image / fit / text / font |
 
+## Permissions & per-dashboard speakers
+
+Everything under **⚙ → Permissions & Speakers…** (admins only, saved **per dashboard**):
+
+- **Who can edit** — *Admins only* or *Everyone*. This governs the playlist tools (add stations, rearrange, playlist manager). Backgrounds, the button editor, and this dialog itself are always admin-only.
+- **Speakers available on THIS dashboard** — an **Auto-discover & add new speakers** toggle, plus a checklist. Toggle on = every current and future speaker appears automatically. Toggle off = the dashboard is pinned to exactly the boxes you check — ideal for kiosk/guest dashboards (e.g. an Airbnb tablet that should only reach guest-area speakers), and new speakers stay out until an admin revisits.
+
+Three effective tiers:
+
+| Capability | Everyone | "Everyone can edit" | Admins |
+|---|---|---|---|
+| Play, zones, volumes, allowed speakers | ✅ | ✅ | ✅ |
+| Add stations, rearrange, playlist manager | — | ✅ | ✅ |
+| Backgrounds, button editor, permissions & speakers | — | — | ✅ |
+
 ## Good to know
 
 - **Saving requires an admin account.** Home Assistant only lets admins write dashboards. The Permissions setting can *show* editing tools to everyone, but a non-admin's edits appear to work only until their page reloads — they are never persisted. (Kiosk tablets running a dedicated admin user work fully.)
@@ -147,6 +163,7 @@ Group support depends on what your media platform exposes:
 - Uploaded images are embedded as data-URIs in the dashboard config — fine for logos and buttons; for large background murals prefer a file in `/config/www` referenced as `/local/...`.
 - If your HA is accessed over HTTPS, `http://` station logos won't display (mixed content) — playback itself is unaffected since the speaker fetches the stream directly.
 - Zones persist across page reloads (per device) and rebuild themselves from whatever is actually playing — sessions started outside the jukebox (voice assistants etc.) show up as their own zone chips.
+- **Want "this device" as a speaker?** Install [browser_mod](https://github.com/thomasloven/hass-browser_mod) and register the browser (Settings → Browser Mod on that device) — it then appears as a `media_player` the jukebox can target. Kiosk tablets running Fully Kiosk are better served by the official **Fully Kiosk integration**, which exposes the tablet as a media player natively. The mobile companion app alone cannot act as a speaker.
 
 ## License
 
