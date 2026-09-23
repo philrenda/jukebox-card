@@ -105,6 +105,23 @@ Group support depends on what your media platform exposes:
 
 **Zone conflict rule (strict no-steal):** a speaker in use by one zone shows as disabled ("in Main House") everywhere else. To move it, uncheck it in the zone that owns it — it stops there and instantly becomes available. A group is selectable only when *every* member is free. Unchecking one member of a playing group breaks the group: the group control drops, remaining speakers continue individually.
 
+## Backgrounds & artwork — step by step
+
+**Card background** (the mural behind the whole jukebox):
+1. Open the jukebox and tap the **⚙ gear** next to the speaker picker.
+2. Choose **Background…**
+3. Either **Choose Image** (uploads from your device, stored in the dashboard) or paste an **image URL** (for large murals, prefer a file you've placed in `config/www`, referenced as `/local/yourfile.jpg`).
+4. Pick how it fills the card — **Fill** (crop to cover), **Fit** (letterbox, whole image visible), **Stretch** (distort to fill), or **Center** (natural size) — the preview updates live.
+5. **Save**. A dark overlay is applied automatically so stations stay readable (tunable via `background_dim`).
+
+**Jukebox Button background** (the dashboard tile):
+1. **Long-press the button itself** — its editor opens.
+2. Choose/paste an image and pick a fit, same options as above.
+3. Set the overlay **text** (clear it for no text) and pick one of four **fonts** — the text is drawn on top of the image, so you can swap images any time and keep your label.
+4. **Save** — the change writes back to the dashboard (and to every dashboard listed in `sync_dashboards`).
+
+**Station artwork**: stations added from the directory bring their own logos. To customize any tile: hard-press a tile to enter edit mode, then **tap** the tile — the artwork editor lets you upload, pan and zoom an image for that station.
+
 ## Gestures cheat-sheet
 
 | Where | Gesture | Action |
