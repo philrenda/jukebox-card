@@ -2210,6 +2210,15 @@ class JukeboxCard extends HTMLElement {
     z.lastCmd = Date.now();
     this._persistZones();
 
+    // analytics hook: automations can track plays via this event
+    try {
+      this._hass.callWS({ type: 'fire_event', event_type: 'jukebox_action', event_data: {
+        action: 'play', station: station.name, url: station.url,
+        playlist: categoryName || '', targets,
+        dashboard: location.pathname.split('/')[1] || ''
+      } });
+    } catch (e) { /* ignore */ }
+
     // Optimistic banner: show the tapped station immediately and hold it
     // through the buffering gap so the banner never flashes back to idle
     this._pendingStation = { name: station.name, url: station.url, ts: Date.now() };
@@ -2273,10 +2282,16 @@ class JukeboxCard extends HTMLElement {
   }
 
   _stopCastSpeakers() {
-    for (const entityId of this._castSpeakers) {
-      this._hass.callService('media_player', 'media_stop', { entity_id: entityId });
+    // stop EVERY live zone (chips survive as stopped presets)
+    for (const z of this._zoneList()) {
+      if (!z.station || !this._zoneLive(z)) continue;
+      for (const t of this._effectiveTargets(z)) {
+        this._hass.callService('media_player', 'media_stop', { entity_id: t });
+      }
+      z.lastCmd = 0;
     }
     this._castSpeakers.clear();
+    this._pendingStation = null;
     this._lastStateHash = null;
     this._updateDynamic();
   }
@@ -2505,6 +2520,14 @@ class JukeboxCard extends HTMLElement {
       for (const cat of categories) {
         const match = cat.stations.find(s => s.url === activeUrl);
         if (match) { activeStationName = match.name; break; }
+      }
+    }
+    // Directory/resolved-url plays aren't in the playlists — the zone
+    // already carries the commanded station's name, so use it.
+    if (!activeStationName && activeUrl) {
+      const az = this._activeZone();
+      if (az && az.station && az.station.url === activeUrl && az.station.name) {
+        activeStationName = az.station.name;
       }
     }
     if (!activeStationName && isPlaying && speakerState.attributes.media_title) {
@@ -2749,14 +2772,13 @@ class JukeboxCard extends HTMLElement {
 
     container.appendChild(controls);
 
-    // ── Now Playing Banner (always rendered to prevent layout jump) ──
+    // ── Now Playing Banner (always rendered; stop button lives ON the bar
+    //    so the station grid below never shifts when playback starts) ──
     const banner = document.createElement('div');
     banner.className = 'now-playing';
-    const bs = this._bannerState(activeUrl, activeStationName, isPlaying);
+    const bs = this._bannerState(activeUrl, activeStationName,
+      isPlaying || (speakerState && speakerState.state === 'buffering'));
     this._fillBanner(banner, bs.name, bs.playing);
-    container.appendChild(banner);
-
-    // ── Stop Cast Button (always in DOM, hidden when no cast speakers) ──
     const stopCast = document.createElement('button');
     stopCast.className = 'stop-cast-btn';
     const stopIco = document.createElement('ha-icon');
@@ -2767,7 +2789,8 @@ class JukeboxCard extends HTMLElement {
     stopCast.appendChild(stopCastLabel);
     stopCast.addEventListener('click', () => this._stopCastSpeakers());
     this._updateStopCastBtn(stopCast);
-    container.appendChild(stopCast);
+    banner.appendChild(stopCast);
+    container.appendChild(banner);
 
     // ── Categories (vertically scrollable; controls above stay fixed) ──
     const stationsArea = document.createElement('div');
@@ -2957,7 +2980,10 @@ class JukeboxCard extends HTMLElement {
   _bannerState(activeUrl, activeStationName, isPlaying) {
     if (this._pendingStation) {
       const p = this._pendingStation;
-      if (activeUrl === p.url || Date.now() - p.ts > 20000) {
+      // activeUrl is COMMANDED state, so it matches p.url the moment the
+      // tile is tapped — release the optimistic hold only once audio is
+      // actually running, else the banner flickers through the buffering gap
+      if ((activeUrl === p.url && isPlaying) || Date.now() - p.ts > 20000) {
         this._pendingStation = null;
       } else {
         return { name: p.name, playing: true };
@@ -2970,33 +2996,52 @@ class JukeboxCard extends HTMLElement {
     const key = `${isPlaying ? 1 : 0}|${activeStationName || ''}`;
     if (banner.dataset.key === key) return;
     banner.dataset.key = key;
-    banner.innerHTML = '';
     banner.classList.toggle('active', !!(activeStationName && isPlaying));
     banner.classList.toggle('idle', !(activeStationName && isPlaying));
+    // Only rebuild the left side — the stop-cast button is a sibling that
+    // must survive banner refills (it carries its own listeners/label).
+    let main = banner.querySelector('.np-main');
+    if (!main) {
+      main = document.createElement('div');
+      main.className = 'np-main';
+      banner.prepend(main);
+    }
+    main.innerHTML = '';
     const npIcon = document.createElement('ha-icon');
     npIcon.setAttribute('icon', 'mdi:radio');
-    banner.appendChild(npIcon);
+    main.appendChild(npIcon);
     const npText = document.createElement('span');
     npText.textContent = (activeStationName && isPlaying) ? activeStationName : 'Select a station to play';
-    banner.appendChild(npText);
-    // Stop button always in layout so the banner height never changes
-    const stopBtn = document.createElement('ha-icon');
-    stopBtn.setAttribute('icon', 'mdi:stop');
-    stopBtn.className = 'stop-btn';
-    if (activeStationName && isPlaying) {
-      stopBtn.addEventListener('click', () => this._stopPlayback());
-    } else {
-      stopBtn.style.visibility = 'hidden';
-    }
-    banner.appendChild(stopBtn);
+    main.appendChild(npText);
   }
 
   _updateStopCastBtn(btn) {
-    // visibility (not display) so the space stays reserved and nothing below jumps
-    const n = this._castSpeakers ? this._castSpeakers.size : 0;
-    btn.style.visibility = n > 0 ? '' : 'hidden';
-    const label = btn.querySelector('.stop-cast-label');
-    if (label) label.textContent = ` Stop ${n} Speaker${n > 1 ? 's' : ''}`;
+    // count = speakers with LIVE audio across all zones (session-agnostic).
+    // A live GROUP target counts as its members that are ACTUALLY live
+    // (members mirror playing state while their group casts) — an
+    // unplugged/absent member doesn't count. Fallbacks: no member live
+    // yet (buffering gap) or membership unknown → count the group as 1.
+    const isLive = id => {
+      const st = this._hass && this._hass.states[id];
+      return st && ['playing', 'buffering', 'paused'].includes(st.state);
+    };
+    const live = new Set();
+    for (const z of this._zoneList()) {
+      if (!z.station || !this._zoneLive(z)) continue;
+      for (const t of this._effectiveTargets(z)) {
+        if (!isLive(t)) continue;
+        if (z.g && t === z.g) {
+          const activeMembers = this._groupMembers(t).filter(isLive);
+          if (activeMembers.length) { activeMembers.forEach(m => live.add(m)); continue; }
+        }
+        live.add(t);
+      }
+    }
+    const n = live.size;
+    // visibility (not display) — geometry stays constant, nothing bounces
+    btn.style.visibility = n ? '' : 'hidden';
+    const lbl = btn.querySelector('.stop-cast-label');
+    if (lbl) lbl.textContent = n === 1 ? 'Stop 1 speaker' : `Stop ${n} speakers`;
   }
 
   // In-place update for playback/volume state changes — leaves the DOM tree
@@ -3289,6 +3334,19 @@ class JukeboxCard extends HTMLElement {
     // master is written to the jukebox cards on those dashboards too
     const here = location.pathname.split('/')[1] || null;
     const targets = [...new Set([here, ...(this._config.sync_dashboards || [])])].filter(Boolean);
+    if (!(this._hass && this._hass.user && this._hass.user.is_admin)) {
+      // Non-admin edits are a SANDBOX by default: in-memory only, gone on
+      // reload, never written to any dashboard. Set `guest_save_bridge:
+      // true` + install the companion automation to persist them instead.
+      if (this._config.guest_save_bridge) {
+        try {
+          const b64 = btoa(unescape(encodeURIComponent(JSON.stringify({ cats, dashboards: targets }))));
+          this._hass.callWS({ type: 'fire_event', event_type: 'jukebox_save_categories', event_data: { b64 } });
+        } catch (e) { console.warn('jukebox-card: guest save bridge failed', e); }
+      }
+      if (render) { this._lastStructuralHash = null; this._render(); }
+      return;
+    }
     for (const urlPath of targets) {
       try {
         const cfg = await this._hass.callWS({ type: 'lovelace/config', url_path: urlPath });
@@ -3853,6 +3911,14 @@ class JukeboxCard extends HTMLElement {
       if (!c) return;
       c.stations.push(stn);
     }
+    // analytics hook: automations can track playlist adds via this event
+    try {
+      this._hass.callWS({ type: 'fire_event', event_type: 'jukebox_action', event_data: {
+        action: 'add', station: stn.name, url: stn.url,
+        playlist: newName || catName, new_playlist: !!newName,
+        dashboard: location.pathname.split('/')[1] || ''
+      } });
+    } catch (e) { /* ignore */ }
   }
 
   // ── Playlist manager (hard-press any playlist title) ──
@@ -4156,12 +4222,21 @@ class JukeboxCard extends HTMLElement {
         if (match) { activeStationName = match.name; break; }
       }
     }
+    // Directory/resolved-url plays aren't in the playlists — the zone
+    // already carries the commanded station's name, so use it.
+    if (!activeStationName && activeUrl) {
+      const az = this._activeZone();
+      if (az && az.station && az.station.url === activeUrl && az.station.name) {
+        activeStationName = az.station.name;
+      }
+    }
     if (!activeStationName && isPlaying && speakerState.attributes.media_title) {
       activeStationName = speakerState.attributes.media_title;
     }
     const banner = root.querySelector('.now-playing');
     if (banner) {
-      const bs = this._bannerState(activeUrl, activeStationName, isPlaying);
+      const bs = this._bannerState(activeUrl, activeStationName,
+      isPlaying || (speakerState && speakerState.state === 'buffering'));
       this._fillBanner(banner, bs.name, bs.playing);
     }
 
@@ -4877,27 +4952,27 @@ class JukeboxCard extends HTMLElement {
         opacity: 0.6;
       }
       .now-playing ha-icon { --mdc-icon-size: 20px; flex-shrink: 0; }
+      .np-main {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex: 1;
+        min-width: 0;
+      }
       .now-playing span {
         flex: 1;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
       }
-      .stop-btn {
-        cursor: pointer;
-        opacity: 0.8;
-        --mdc-icon-size: 22px;
-        flex-shrink: 0;
-      }
-      .stop-btn:hover { opacity: 1; }
 
-      /* ── Stop Cast Button ── */
+      /* ── Stop Cast Button (lives on the now-playing bar) ── */
       .stop-cast-btn {
         display: flex;
         align-items: center;
         gap: 6px;
-        padding: 8px 16px;
-        border-radius: 20px;
+        padding: 4px 12px;
+        border-radius: 16px;
         border: 2px solid #ff9800;
         background: rgba(255, 152, 0, 0.08);
         color: #ff9800;
@@ -4906,10 +4981,17 @@ class JukeboxCard extends HTMLElement {
         cursor: pointer;
         font-family: inherit;
         transition: background 0.15s;
-        align-self: center;
+        flex-shrink: 0;
+        margin: -2px 0;
       }
       .stop-cast-btn:hover { background: rgba(255, 152, 0, 0.2); }
       .stop-cast-btn ha-icon { --mdc-icon-size: 18px; }
+      .now-playing.active .stop-cast-btn {
+        border-color: #fff;
+        color: #fff;
+        background: rgba(255, 255, 255, 0.14);
+      }
+      .now-playing.active .stop-cast-btn:hover { background: rgba(255, 255, 255, 0.28); }
 
       /* ── Category ── */
       .category {
@@ -5456,7 +5538,7 @@ if (!customElements.get('jukebox-button-card')) {
 }
 
 console.info(
-  '%c JUKEBOX-CARD %c v4.1.0 ',
+  '%c JUKEBOX-CARD %c v4.1.8 ',
   'background:#FF9800;color:#000;font-weight:700;border-radius:4px 0 0 4px;padding:2px 6px;',
   'background:#222;color:#FF9800;font-weight:700;border-radius:0 4px 4px 0;padding:2px 6px;'
 );
