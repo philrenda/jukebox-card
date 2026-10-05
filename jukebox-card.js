@@ -1727,12 +1727,25 @@ class JukeboxCard extends HTMLElement {
     return this._autoDiscoverSpeakers();
   }
 
+  // Controller/mirror entities (Spotify Connect etc.) support play_media
+  // but aren't speakers — they shadow whatever device is playing (often a
+  // phone, or a cast speaker that already has its own entity) and spawn
+  // phantom zones for sessions the jukebox can't own.
+  _isControllerEntity(entityId) {
+    try {
+      const ent = this._hass.entities && this._hass.entities[entityId];
+      if (ent && ent.platform === 'spotify') return true;
+    } catch (e) { /* ignore */ }
+    return entityId.startsWith('media_player.spotify_');
+  }
+
   _autoDiscoverSpeakers() {
     if (!this._hass) return [];
     const speakers = [];
     for (const [entityId, state] of Object.entries(this._hass.states)) {
       if (!entityId.startsWith('media_player.')) continue;
       if (state.state === 'unavailable') continue;
+      if (this._isControllerEntity(entityId)) continue;
       const features = state.attributes.supported_features || 0;
       if (features & 512) {
         speakers.push({
@@ -1746,6 +1759,7 @@ class JukeboxCard extends HTMLElement {
       for (const [entityId, state] of Object.entries(this._hass.states)) {
         if (!entityId.startsWith('media_player.')) continue;
         if (state.state === 'unavailable') continue;
+        if (this._isControllerEntity(entityId)) continue;
         speakers.push({
           name: state.attributes.friendly_name || entityId,
           entity: entityId
@@ -1849,7 +1863,10 @@ class JukeboxCard extends HTMLElement {
     const zones = this._zoneList();
     let z = zones.find(zz => zz.id === this._activeZoneId);
     if (!z) {
-      z = zones.find(zz => zz.station) || zones[0];
+      // Only USER zones may auto-become active — an externally discovered
+      // session (e.g. Spotify cast from a phone) must never capture the
+      // banner/volume/stop controls; it stays a chip until tapped.
+      z = zones.find(zz => zz.user && zz.station) || zones.find(zz => zz.user);
       if (!z) z = this._newDraftZone();
       this._activeZoneId = z.id;
     }
@@ -2054,7 +2071,23 @@ class JukeboxCard extends HTMLElement {
         const st = hass.states[id];
         return st && ['playing', 'buffering', 'paused'].includes(st.state);
       });
-      if (alive) { z.lastAlive = Date.now(); continue; }
+      if (alive) {
+        z.lastAlive = Date.now();
+        // follow the external session's current content (Spotify track
+        // changes etc.) — a stale url also breaks claimed() matching
+        const playingId = [...watch].find(id => {
+          const st = hass.states[id];
+          return st && st.state === 'playing';
+        });
+        if (playingId) {
+          const st = hass.states[playingId];
+          const cid = st.attributes.media_content_id || '';
+          if (cid && z.station && z.station.url !== cid) {
+            z.station = this._stationFromState(st);
+          }
+        }
+        continue;
+      }
       const ref = Math.max(z.lastCmd || 0, z.lastAlive || 0);
       if (Date.now() - ref > 25000) this._removeZone(z);
     }
@@ -2282,13 +2315,32 @@ class JukeboxCard extends HTMLElement {
   }
 
   _stopCastSpeakers() {
-    // stop EVERY live zone (chips survive as stopped presets)
-    for (const z of this._zoneList()) {
-      if (!z.station || !this._zoneLive(z)) continue;
+    // ZONE-SCOPED (2026-10-05, Phil): stop only the ACTIVE zone — other
+    // zones keep playing until selected (chips survive as stopped presets)
+    for (const z of [this._activeZone()]) {
+      if (!z || !z.station || !this._zoneLive(z)) continue;
       for (const t of this._effectiveTargets(z)) {
-        this._hass.callService('media_player', 'media_stop', { entity_id: t });
+        // Foreign-app cast sessions (Spotify etc.) reject media_stop and
+        // every rejection toasts an error — quit the app session instead
+        // (turn_off ends it and frees the speaker). Jukebox's own streams
+        // (Default Media Receiver / no app) keep media_stop. All paths
+        // catch: a failed stop must never spam the UI.
+        const st = this._hass.states[t];
+        const app = st && st.attributes.app_name;
+        const foreign = app && app !== 'Default Media Receiver';
+        const quiet = () => {};
+        if (foreign) {
+          this._hass.callService('media_player', 'turn_off', { entity_id: t })
+            .catch(() => this._hass.callService('media_player', 'media_pause', { entity_id: t }).catch(quiet));
+        } else {
+          this._hass.callService('media_player', 'media_stop', { entity_id: t }).catch(quiet);
+        }
       }
       z.lastCmd = 0;
+      // An explicitly stopped EXTERNAL zone clears immediately — no point
+      // waiting out the 25s silence GC (that grace is for buffering gaps,
+      // not deliberate stops). User zones stay as stopped presets.
+      if (!z.user) this._removeZone(z);
     }
     this._castSpeakers.clear();
     this._pendingStation = null;
@@ -2992,8 +3044,20 @@ class JukeboxCard extends HTMLElement {
     return { name: activeStationName, playing: isPlaying };
   }
 
+  // When the active zone is idle, the banner surfaces external sessions
+  // (Spotify casts etc.) instead of the bare placeholder — informational
+  // only (idle styling, cast icon), the controls stay on the user's zone.
+  _externalNowPlaying() {
+    const ext = this._zoneList().filter(z =>
+      !z.user && z.station && z.station.name && this._zoneLive(z));
+    if (!ext.length) return null;
+    const first = `${ext[0].station.name} · ${this._zoneName(ext[0])}`;
+    return ext.length > 1 ? `${first} (+${ext.length - 1} more)` : first;
+  }
+
   _fillBanner(banner, activeStationName, isPlaying) {
-    const key = `${isPlaying ? 1 : 0}|${activeStationName || ''}`;
+    const extText = (activeStationName && isPlaying) ? null : this._externalNowPlaying();
+    const key = `${isPlaying ? 1 : 0}|${activeStationName || ''}|${extText || ''}`;
     if (banner.dataset.key === key) return;
     banner.dataset.key = key;
     banner.classList.toggle('active', !!(activeStationName && isPlaying));
@@ -3008,17 +3072,20 @@ class JukeboxCard extends HTMLElement {
     }
     main.innerHTML = '';
     const npIcon = document.createElement('ha-icon');
-    npIcon.setAttribute('icon', 'mdi:radio');
+    npIcon.setAttribute('icon', extText ? 'mdi:cast-audio' : 'mdi:radio');
     main.appendChild(npIcon);
     const npText = document.createElement('span');
-    npText.textContent = (activeStationName && isPlaying) ? activeStationName : 'Select a station to play';
+    npText.textContent = (activeStationName && isPlaying) ? activeStationName
+      : (extText || 'Select a station to play');
     main.appendChild(npText);
   }
 
   _updateStopCastBtn(btn) {
-    // count = speakers with LIVE audio across all zones (session-agnostic).
-    // A live GROUP target counts as its members that are ACTUALLY live
-    // (members mirror playing state while their group casts) — an
+    // ZONE-SCOPED (2026-10-05, Phil): count/stop apply to the ACTIVE zone
+    // only — other zones (incl. external sessions) are controlled by
+    // tapping their chip first. Count = this zone's speakers with LIVE
+    // audio; a live GROUP target counts as its members that are ACTUALLY
+    // live (members mirror playing state while their group casts) — an
     // unplugged/absent member doesn't count. Fallbacks: no member live
     // yet (buffering gap) or membership unknown → count the group as 1.
     const isLive = id => {
@@ -3026,8 +3093,8 @@ class JukeboxCard extends HTMLElement {
       return st && ['playing', 'buffering', 'paused'].includes(st.state);
     };
     const live = new Set();
-    for (const z of this._zoneList()) {
-      if (!z.station || !this._zoneLive(z)) continue;
+    const z = this._activeZone();
+    if (z && z.station && this._zoneLive(z)) {
       for (const t of this._effectiveTargets(z)) {
         if (!isLive(t)) continue;
         if (z.g && t === z.g) {
@@ -4125,6 +4192,9 @@ class JukeboxCard extends HTMLElement {
     if (this._zonePopOpen) return; // don't wipe the delete popup mid-confirm
     bar.innerHTML = '';
     for (const z of zones) {
+      // empty drafts get no chip — the [+] button is the single "new
+      // zone" affordance (an auto-minted draft otherwise doubles it)
+      if (!z.station && !z.s.length) continue;
       const chip = document.createElement('div');
       const live = this._zoneLive(z);
       chip.className = 'zone-chip' + (z.id === act.id ? ' active' : '') + (z.station && !live ? ' stopped' : '');
@@ -5538,7 +5608,7 @@ if (!customElements.get('jukebox-button-card')) {
 }
 
 console.info(
-  '%c JUKEBOX-CARD %c v4.1.8 ',
+  '%c JUKEBOX-CARD %c v4.1.13 ',
   'background:#FF9800;color:#000;font-weight:700;border-radius:4px 0 0 4px;padding:2px 6px;',
   'background:#222;color:#FF9800;font-weight:700;border-radius:0 4px 4px 0;padding:2px 6px;'
 );
