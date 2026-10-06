@@ -1720,11 +1720,25 @@ class JukeboxCard extends HTMLElement {
 
   // ── Speaker Management ──
 
+  // Display names only — entity_ids untouched. Long friendly names made the
+  // dropdown/chips unreadable (Phil 2026-10-06): LR/BR abbreviations, drop
+  // redundant "speaker"/"display" suffixes.
+  _shortName(n) {
+    const out = String(n || '')
+      .replace(/speaker above the garage/i, 'Garage')
+      .replace(/living room/ig, 'LR')
+      .replace(/bedroom/ig, 'BR')
+      .replace(/\s*speaker$/i, '')
+      .replace(/\s*display$/i, '')
+      .replace(/\s+/g, ' ').trim();
+    return out || String(n || '');
+  }
+
   _getSpeakers() {
-    if (this._config.speakers && this._config.speakers.length) {
-      return this._config.speakers;
-    }
-    return this._autoDiscoverSpeakers();
+    const list = (this._config.speakers && this._config.speakers.length)
+      ? this._config.speakers
+      : this._autoDiscoverSpeakers();
+    return list.map(sp => ({ ...sp, name: this._shortName(sp.name) }));
   }
 
   // Controller/mirror entities (Spotify Connect etc.) support play_media
@@ -2038,6 +2052,13 @@ class JukeboxCard extends HTMLElement {
       for (const z of saved.zones) {
         const sel = (z.s || []).filter(id => known.has(id));
         if (!sel.length && !z.station) continue;
+        // only resurrect zones whose audio is STILL RUNNING (reload
+        // continuity) — stopped chips must never come back from storage
+        const audible = sel.concat(z.g && known.has(z.g) ? [z.g] : []).some(id => {
+          const st = hass.states[id];
+          return st && ['playing', 'buffering', 'paused'].includes(st.state);
+        });
+        if (!audible) continue;
         this._zones.push({
           id: z.id, g: (z.g && known.has(z.g)) ? z.g : null, s: sel,
           station: z.station || null, lastCmd: 0, user: true
@@ -2062,10 +2083,11 @@ class JukeboxCard extends HTMLElement {
   // died elsewhere; surface sessions started outside the jukebox.
   _reconcileZones(hass) {
     const zones = this._zoneList();
-    // USER zones persist when stopped (deleted only via long-press);
-    // auto-discovered external zones still GC once dead.
+    // Zones live only as long as their audio: ANY zone (user or external)
+    // GCs after 25s of continuous silence. Drafts (station null) persist
+    // while being built.
     for (const z of [...zones]) {
-      if (!z.station || z.user) continue;
+      if (!z.station) continue;
       const watch = new Set(this._zoneTargets(z).concat(z.s));
       const alive = [...watch].some(id => {
         const st = hass.states[id];
@@ -2092,9 +2114,22 @@ class JukeboxCard extends HTMLElement {
       if (Date.now() - ref > 25000) this._removeZone(z);
     }
     // discovery: a zone "claims" a playing speaker when the speaker is in
-    // its selection AND plays its station — everything else is external
-    const claimed = (sp, cid) => this._zoneList().some(z =>
-      z.s.includes(sp) && z.station && z.station.url === cid);
+    // its selection AND plays its station — everything else is external.
+    // URL compare is normalized (scheme/trailing-slash drift between the
+    // commanded url and the reported media_content_id spawned phantom
+    // "external" zones for our own casts), and a user zone whose station
+    // matches ADOPTS a playing speaker missing from its selection so the
+    // stop button and orange highlight stay on the real zone.
+    const norm = u => String(u || '').replace(/^https?:\/\//, '').replace(/\/+$/, '').toLowerCase();
+    const claimed = (sp, cid) => {
+      for (const z of this._zoneList()) {
+        if (!z.station) continue;
+        const match = norm(z.station.url) === norm(cid);
+        if (z.s.includes(sp) && match) return true;
+        if (z.user && match) { z.s.push(sp); this._persistZones(); return true; }
+      }
+      return false;
+    };
     const solos = this._getSpeakers().filter(sp => !this._isSpeakerGroup(sp.entity));
     const clusters = {};
     for (const sp of solos) {
@@ -2116,6 +2151,16 @@ class JukeboxCard extends HTMLElement {
       if (!st || st.state !== 'playing') continue;
       const members = this._groupMembers(g.entity).filter(m => !this._zoneOwner(m));
       this._zones.push({ id: ++this._zoneSeq, g: g.entity, s: members, station: this._stationFromState(st), lastCmd: Date.now(), user: false });
+    }
+    // Controls follow the music: if the ACTIVE zone sits idle (and isn't a
+    // draft being built) while a user zone is live, make the live zone
+    // active — stop/orange/volume must never strand on a stopped preset.
+    const act = this._zones.find(z => z.id === this._activeZoneId);
+    if (act && act.station && !this._zoneLive(act)) {
+      const live = this._zones
+        .filter(z => z.user && z.id !== act.id && z.station && this._zoneLive(z))
+        .sort((x, y) => (y.lastCmd || 0) - (x.lastCmd || 0))[0];
+      if (live) this._activeZoneId = live.id;
     }
   }
 
@@ -2284,15 +2329,30 @@ class JukeboxCard extends HTMLElement {
   // Live-apply a selection change while a station is playing: newly added
   // targets start the current station, removed targets stop. When nothing
   // is playing this is a no-op (selection only affects the next tap).
+  // Stop a speaker without ever toasting an error: skip entities with no
+  // active session (an off/idle speaker REJECTS media_stop — "Failed to
+  // execute stop"), route foreign-app sessions through turn_off, and
+  // swallow every rejection.
+  _quietStop(id) {
+    const st = this._hass && this._hass.states[id];
+    if (!st || !['playing', 'buffering', 'paused'].includes(st.state)) return;
+    const quiet = () => {};
+    const app = st.attributes.app_name;
+    if (app && app !== 'Default Media Receiver') {
+      this._hass.callService('media_player', 'turn_off', { entity_id: id })
+        .catch(() => this._hass.callService('media_player', 'media_pause', { entity_id: id }).catch(quiet));
+    } else {
+      this._hass.callService('media_player', 'media_stop', { entity_id: id }).catch(quiet);
+    }
+  }
+
   _applySelectionDiff(before, after, cur) {
     if (!this._hass) return;
     const b = new Set(before), a = new Set(after);
     const removed = before.filter(id => !a.has(id));
     const added = after.filter(id => !b.has(id));
-    // stops are unconditional — an undetectable station must never strand
-    // audio on a deselected target
     for (const id of removed) {
-      this._hass.callService('media_player', 'media_stop', { entity_id: id });
+      this._quietStop(id);
       this._castSpeakers.delete(id);
     }
     if (cur && added.length) this._castTo(added, cur.station, cur.category);
@@ -2303,13 +2363,13 @@ class JukeboxCard extends HTMLElement {
     this._pendingStation = null;
     const z = this._activeZone();
     for (const target of this._effectiveTargets(z)) {
-      this._hass.callService('media_player', 'media_stop', { entity_id: target });
+      this._quietStop(target);
       this._castSpeakers.delete(target);
     }
-    // the zone SURVIVES as a stopped preset (chip dims); its speakers are
-    // now free for other zones. Delete = long-press the chip.
-    z.lastCmd = 0;
-    this._persistZones();
+    // zones exist only while their music plays (Phil 2026-10-06, supersedes
+    // the v3.1 stopped-presets design): stopping removes the zone; the UI
+    // falls back to the next zone or a clean draft.
+    this._removeZone(z);
     this._lastStateHash = null;
     this._updateDynamic();
   }
@@ -2336,11 +2396,9 @@ class JukeboxCard extends HTMLElement {
           this._hass.callService('media_player', 'media_stop', { entity_id: t }).catch(quiet);
         }
       }
-      z.lastCmd = 0;
-      // An explicitly stopped EXTERNAL zone clears immediately — no point
-      // waiting out the 25s silence GC (that grace is for buffering gaps,
-      // not deliberate stops). User zones stay as stopped presets.
-      if (!z.user) this._removeZone(z);
+      // Any explicitly stopped zone clears immediately — zones exist only
+      // while their music plays (no stopped-preset chips).
+      this._removeZone(z);
     }
     this._castSpeakers.clear();
     this._pendingStation = null;
@@ -5083,6 +5141,7 @@ class JukeboxCard extends HTMLElement {
         display: flex;
         overflow-x: auto;
         scroll-snap-type: x mandatory;
+        scroll-padding: 6px;
         -webkit-overflow-scrolling: touch;
         scrollbar-width: none;
       }
@@ -5094,7 +5153,9 @@ class JukeboxCard extends HTMLElement {
         min-width: 100%;
         flex-shrink: 0;
         box-sizing: border-box;
-        padding: 3px;
+        /* 6px: the active tile's 2px orange ring + glow must not clip at
+           the page edge (first tile looked "cut off") */
+        padding: 6px;
       }
 
       /* ── Station Tile ── */
@@ -5608,7 +5669,7 @@ if (!customElements.get('jukebox-button-card')) {
 }
 
 console.info(
-  '%c JUKEBOX-CARD %c v4.1.13 ',
+  '%c JUKEBOX-CARD %c v4.2.0 ',
   'background:#FF9800;color:#000;font-weight:700;border-radius:4px 0 0 4px;padding:2px 6px;',
   'background:#222;color:#FF9800;font-weight:700;border-radius:0 4px 4px 0;padding:2px 6px;'
 );
