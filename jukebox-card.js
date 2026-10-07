@@ -4496,14 +4496,21 @@ class JukeboxCard extends HTMLElement {
       }
       .speaker-item.checked .spk-vol-wrap { display: flex; }
       .spk-vol { flex: 1; }
+      /* Single reserved-height top row, horizontally scrollable — the bar
+         must NEVER change height or vanish (chip churn on station changes
+         was shoving the whole card = Phil's "jumping") */
       .zone-chips {
         display: flex;
-        flex-wrap: wrap;
+        flex-wrap: nowrap;
+        overflow-x: auto;
         gap: 8px;
         align-items: center;
         position: relative;
+        min-height: 44px;
+        scrollbar-width: none;
+        -webkit-overflow-scrolling: touch;
       }
-      .zone-chips:empty { display: none; }
+      .zone-chips::-webkit-scrollbar { display: none; }
       .zone-chip {
         padding: 6px 14px;
         border-radius: 16px;
@@ -4513,7 +4520,8 @@ class JukeboxCard extends HTMLElement {
         font-size: 13px;
         cursor: pointer;
         white-space: nowrap;
-        max-width: 46%;
+        flex-shrink: 0;
+        max-width: 60%;
         overflow: hidden;
         text-overflow: ellipsis;
       }
@@ -5669,7 +5677,7 @@ if (!customElements.get('jukebox-button-card')) {
 }
 
 console.info(
-  '%c JUKEBOX-CARD %c v4.2.0 ',
+  '%c JUKEBOX-CARD %c v4.2.1 ',
   'background:#FF9800;color:#000;font-weight:700;border-radius:4px 0 0 4px;padding:2px 6px;',
   'background:#222;color:#FF9800;font-weight:700;border-radius:0 4px 4px 0;padding:2px 6px;'
 );
