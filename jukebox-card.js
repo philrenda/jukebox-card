@@ -2182,6 +2182,31 @@ class JukeboxCard extends HTMLElement {
     return DEFAULT_STATIONS;
   }
 
+  // ── Scroll persistence (per device via localStorage) ──
+
+  _playingCategoryName() {
+    try {
+      const url = this._getActiveStationUrl();
+      if (!url) return null;
+      const cat = (this._getCategories() || []).find(c => (c.stations || []).some(s => s.url === url));
+      return cat ? cat.name : null;
+    } catch (e) { return null; }
+  }
+
+  _saveScrollState() {
+    try {
+      const root = this.shadowRoot; if (!root) return;
+      const area = root.querySelector('.stations-area'); if (!area) return;
+      const state = { top: area.scrollTop, ts: Date.now() };
+      const cat = this._playingCategoryName();
+      if (cat) {
+        const row = [...root.querySelectorAll('.station-scroll')].find(el => el.dataset.category === cat);
+        if (row) { state.cat = cat; state.left = row.scrollLeft; }
+      }
+      localStorage.setItem('jukebox-scroll-v1', JSON.stringify(state));
+    } catch (e) { /* ignore */ }
+  }
+
   // ── State ──
 
   _computeStateHash(hass) {
@@ -2650,7 +2675,21 @@ class JukeboxCard extends HTMLElement {
       scrollPositions[el.dataset.category] = el.scrollLeft;
     });
     const prevArea = root.querySelector('.stations-area');
-    const stationsScrollTop = prevArea ? prevArea.scrollTop : undefined;
+    let stationsScrollTop = prevArea ? prevArea.scrollTop : undefined;
+    // First render of a page load + music playing: seed from the per-device
+    // saved state so the view reopens where it was left (vertical position +
+    // the PLAYING playlist's horizontal position) instead of resetting.
+    if (!this._scrollSeeded) {
+      this._scrollSeeded = true;
+      if (stationsScrollTop === undefined && this._getActiveStationUrl()) {
+        let sv = null;
+        try { sv = JSON.parse(localStorage.getItem('jukebox-scroll-v1') || 'null'); } catch (e) {}
+        if (sv) {
+          if (typeof sv.top === 'number') stationsScrollTop = sv.top;
+          if (sv.cat && typeof sv.left === 'number') scrollPositions[sv.cat] = sv.left;
+        }
+      }
+    }
 
     root.innerHTML = '';
 
@@ -2709,13 +2748,22 @@ class JukeboxCard extends HTMLElement {
       const isRow = t && t.classList && t.classList.contains('station-scroll');
       const isMenu = t && t.classList && t.classList.contains('speaker-menu');
       if (this._speakerMenuOpen && !isMenu) this._closeSpeakerMenu();
+      // persist scroll per device (debounced) so reopening the jukebox
+      // lands back where you were while music plays
+      if (!isMenu) {
+        clearTimeout(this._scrollSaveT);
+        this._scrollSaveT = setTimeout(() => this._saveScrollState(), 400);
+      }
       // vertical scrolling resets every playlist row to its first station
-      // — but never during edit mode (fights drag auto-scroll) or when the
-      // render pipeline is programmatically restoring positions
+      // — EXCEPT the playing playlist's row (keep the playing station in
+      // reach), and never during edit mode (fights drag auto-scroll) or
+      // while the render pipeline is programmatically restoring positions
       if (!isRow && !isMenu && !this._vScrollReset && !this._jiggle && !this._suppressRowReset) {
         this._vScrollReset = true;
         setTimeout(() => { this._vScrollReset = false; }, 600);
+        const keep = this._playingCategoryName();
         this.shadowRoot.querySelectorAll('.station-scroll').forEach(sc => {
+          if (keep && sc.dataset.category === keep) return;
           if (sc.scrollLeft > 0) sc.scrollTo({ left: 0, behavior: 'smooth' });
         });
       }
@@ -5677,7 +5725,7 @@ if (!customElements.get('jukebox-button-card')) {
 }
 
 console.info(
-  '%c JUKEBOX-CARD %c v4.2.1 ',
+  '%c JUKEBOX-CARD %c v4.2.2 ',
   'background:#FF9800;color:#000;font-weight:700;border-radius:4px 0 0 4px;padding:2px 6px;',
   'background:#222;color:#FF9800;font-weight:700;border-radius:0 4px 4px 0;padding:2px 6px;'
 );
