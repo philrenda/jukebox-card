@@ -1605,6 +1605,15 @@ class JukeboxCard extends HTMLElement {
 
   disconnectedCallback() {
     if (this._onResize) window.removeEventListener('resize', this._onResize);
+    // flush a pending scroll save — navigating away within the debounce
+    // window must not lose the position (detached DOM keeps its scrollTop)
+    clearTimeout(this._scrollSaveT);
+    this._saveScrollState();
+    if (this._pageScroller && this._pageScrollHandler) {
+      try { this._pageScroller.removeEventListener('scroll', this._pageScrollHandler); } catch (e) {}
+      try { window.removeEventListener('scroll', this._pageScrollHandler); } catch (e) {}
+      this._pageScroller = null;
+    }
   }
 
   // Pin the card to the viewport bottom so .stations-area scrolls internally
@@ -2198,6 +2207,17 @@ class JukeboxCard extends HTMLElement {
       const root = this.shadowRoot; if (!root) return;
       const area = root.querySelector('.stations-area'); if (!area) return;
       const state = { top: area.scrollTop, ts: Date.now() };
+      const sc = this._findVScroller();
+      if (sc && sc.scrollTop > 0) {
+        state.ptop = sc.scrollTop;
+      } else {
+        // scroller unreachable/reset (e.g. disconnect flush mid-navigation):
+        // keep the previous page position rather than losing it
+        try {
+          const prev = JSON.parse(localStorage.getItem('jukebox-scroll-v1') || 'null');
+          if (prev && typeof prev.ptop === 'number') state.ptop = prev.ptop;
+        } catch (e) { /* ignore */ }
+      }
       const cat = this._playingCategoryName();
       if (cat) {
         const row = [...root.querySelectorAll('.station-scroll')].find(el => el.dataset.category === cat);
@@ -2205,6 +2225,42 @@ class JukeboxCard extends HTMLElement {
       }
       localStorage.setItem('jukebox-scroll-v1', JSON.stringify(state));
     } catch (e) { /* ignore */ }
+  }
+
+  // The vertical scroller OUTSIDE the card (phone/unpinned layout): walk the
+  // composed tree upward to the first scrollable ancestor, falling back to
+  // the document scroller.
+  _findVScroller() {
+    try {
+      let el = this;
+      while (el) {
+        if (el.nodeType === 1 && el.scrollHeight > el.clientHeight + 20) {
+          const o = getComputedStyle(el).overflowY;
+          if (o === 'auto' || o === 'scroll') return el;
+        }
+        el = el.assignedSlot || el.parentNode || el.host || null;
+        if (el && el.nodeType === 11) el = el.host;   // shadow root -> host
+      }
+    } catch (e) { /* ignore */ }
+    return document.scrollingElement || null;
+  }
+
+  _attachPageScrollSave() {
+    const sc = this._findVScroller();
+    if (!sc || sc === this._pageScroller) return;
+    if (this._pageScroller && this._pageScrollHandler) {
+      try { this._pageScroller.removeEventListener('scroll', this._pageScrollHandler); } catch (e) {}
+      try { window.removeEventListener('scroll', this._pageScrollHandler); } catch (e) {}
+    }
+    this._pageScroller = sc;
+    this._pageScrollHandler = () => {
+      clearTimeout(this._scrollSaveT);
+      this._scrollSaveT = setTimeout(() => this._saveScrollState(), 400);
+    };
+    sc.addEventListener('scroll', this._pageScrollHandler, { passive: true });
+    if (sc === document.scrollingElement) {
+      window.addEventListener('scroll', this._pageScrollHandler, { passive: true });
+    }
   }
 
   // ── State ──
@@ -2687,6 +2743,7 @@ class JukeboxCard extends HTMLElement {
         if (sv) {
           if (typeof sv.top === 'number') stationsScrollTop = sv.top;
           if (sv.cat && typeof sv.left === 'number') scrollPositions[sv.cat] = sv.left;
+          if (typeof sv.ptop === 'number') this._pendingPageTop = sv.ptop;
         }
       }
     }
@@ -3129,6 +3186,16 @@ class JukeboxCard extends HTMLElement {
     });
     this._sizeCard();
     requestAnimationFrame(() => this._sizeCard());
+
+    // page-scroll restore (phone/unpinned layout: the VIEW scrolls, not
+    // .stations-area) — retried because HA can reset scroll after attach
+    if (this._pendingPageTop != null) {
+      const pt = this._pendingPageTop; this._pendingPageTop = null;
+      const apply = () => { const sc = this._findVScroller(); if (sc && pt > 0) sc.scrollTop = pt; };
+      apply(); setTimeout(apply, 120); setTimeout(apply, 450);
+    }
+    // debounced saves must also hear PAGE scrolls (outside the shadow root)
+    this._attachPageScrollSave();
 
     this._lastStructuralHash = this._computeStructuralHash();
   }
@@ -5725,7 +5792,7 @@ if (!customElements.get('jukebox-button-card')) {
 }
 
 console.info(
-  '%c JUKEBOX-CARD %c v4.2.2 ',
+  '%c JUKEBOX-CARD %c v4.2.3 ',
   'background:#FF9800;color:#000;font-weight:700;border-radius:4px 0 0 4px;padding:2px 6px;',
   'background:#222;color:#FF9800;font-weight:700;border-radius:0 4px 4px 0;padding:2px 6px;'
 );
